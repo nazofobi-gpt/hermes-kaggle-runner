@@ -11,20 +11,23 @@ jobs:
     timeout-minutes: 5
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
-      KERNEL_ID: nazofobigpt/hermes-encrypted-gpu-task
     steps:
-      - name: Check task kernel
+      - name: Check task kernels
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install -q --upgrade kaggle
-          status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
-          echo "$status"
-          if grep -Eq 'ERROR|COMPLETE|CANCEL' <<<"$status"; then
-            mkdir -p "$RUNNER_TEMP/out"
-            kaggle kernels output "$KERNEL_ID" -p "$RUNNER_TEMP/out" -q || true
-            for f in "$RUNNER_TEMP"/out/*.log "$RUNNER_TEMP"/out/**/*.log; do
-              [[ -f "$f" ]] || continue
-              grep -E 'GPU_TASK_(ID|DECRYPT|MODEL_CACHE|ZSTD|OLLAMA_INSTALL|FATAL|PASS|RESULT_B64)' "$f" | tail -n 100 || true
-            done
-          fi
+          for KERNEL_ID in nazofobigpt/hermes-gpu-task nazofobigpt/hermes-encrypted-gpu-task; do
+            echo "PROBE_KERNEL=$KERNEL_ID"
+            status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
+            echo "$status"
+            if grep -Eq 'ERROR|COMPLETE|CANCEL' <<<"$status"; then
+              mkdir -p "$RUNNER_TEMP/out"
+              rm -rf "$RUNNER_TEMP/out"/*
+              kaggle kernels output "$KERNEL_ID" -p "$RUNNER_TEMP/out" -q || true
+              for f in "$RUNNER_TEMP"/out/*.log "$RUNNER_TEMP"/out/**/*.log; do
+                [[ -f "$f" ]] || continue
+                grep -E 'GPU_TASK_(ID|DECRYPT|MODEL_CACHE|ZSTD|OLLAMA_INSTALL|FATAL|PASS|RESULT_B64)' "$f" | tail -n 100 || true
+              done
+            fi
+          done
