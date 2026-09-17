@@ -1,7 +1,7 @@
 {
-  "generation": 2,
+  "generation": 3,
   "model": "qwen2.5-coder:14b-instruct-q4_K_M",
   "context": 16384,
   "tool_trials": 5,
-  "reason": "retry-after-cache-mount-discovery-fix"
+  "reason": "retry-cache-only-direct-base-model"
 }
