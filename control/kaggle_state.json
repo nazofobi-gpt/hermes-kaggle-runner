@@ -1,5 +1,5 @@
 {
-  "desired": "RUN",
+  "desired": "STOP",
   "generation": 6,
-  "reason": "automation-e2e-acceptance-embedded-bootstrap"
+  "reason": "automation-e2e-test-complete-blocked-on-kaggle-secret-attachment"
 }
