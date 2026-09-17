@@ -1,5 +1,5 @@
 {
   "desired": "RUN",
-  "generation": 5,
-  "reason": "automation-e2e-acceptance-after-packaging-fix"
+  "generation": 6,
+  "reason": "automation-e2e-acceptance-embedded-bootstrap"
 }
