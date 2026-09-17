@@ -46,6 +46,31 @@ fi
 echo "TASK_MODE=$MODE"
 echo "TASK_DYNAMIC_FIXTURE=$DYNAMIC_FIXTURE"
 
+# Fail fast before the expensive Hermes install. Quick Tunnel endpoints are
+# ephemeral; a stale URL should fail in seconds rather than after model retries.
+ENDPOINT_ROOT="${KAGGLE_BASE_URL%/}"
+ENDPOINT_ROOT="${ENDPOINT_ROOT%/v1}"
+HEALTH_URL="$ENDPOINT_ROOT/health"
+HEALTH_BODY="${RUNNER_TEMP:-/tmp}/kaggle-health.json"
+
+printf '%s\n' '=== Kaggle endpoint preflight ==='
+set +e
+HTTP_CODE=$(curl -sS -o "$HEALTH_BODY" -w '%{http_code}' \
+  --connect-timeout 10 --max-time 20 \
+  -H "Authorization: Bearer $KAGGLE_API_KEY" \
+  "$HEALTH_URL")
+CURL_RC=$?
+set -e
+
+if [[ "$CURL_RC" -ne 0 || "$HTTP_CODE" != "200" ]]; then
+  echo "KAGGLE_ENDPOINT_HEALTH: FAIL http=${HTTP_CODE:-000} curl_rc=$CURL_RC"
+  echo 'KAGGLE_ENDPOINT_UNAVAILABLE: refresh Kaggle session/tunnel and KAGGLE_BASE_URL'
+  rm -f "$HEALTH_BODY"
+  exit 3
+fi
+rm -f "$HEALTH_BODY"
+echo 'KAGGLE_ENDPOINT_HEALTH: PASS'
+
 export PATH="$HOME/.local/bin:$PATH"
 export HERMES_HOME="$RUNNER_TEMP/hermes-home"
 export NO_COLOR=1
