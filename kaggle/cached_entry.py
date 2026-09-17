@@ -19,10 +19,10 @@ GITHUB_OWNER = "nazofobi-gpt"
 GITHUB_REPO = "hermes-kaggle-runner"
 CONTEXT_LENGTH = 65536
 
-# GitHub Actions replaces this exact placeholder in its temporary checkout before
-# `kaggle kernels push`. Kaggle script kernels only guarantee the code_file itself,
-# so runtime configuration must not depend on a sibling file being uploaded.
+# GitHub Actions replaces these exact placeholders only in its temporary
+# checkout before pushing the private Kaggle kernel. Neither value is committed.
 EMBEDDED_RUNTIME_CONFIG = None
+EMBEDDED_PROXY_API_KEY = None
 
 
 def discover_cache_root() -> pathlib.Path:
@@ -63,8 +63,8 @@ def stage_persistent_cache() -> None:
             dst.unlink()
         dst.symlink_to(src)
 
-    # Manifest files are writable local copies. Multi-GB model blobs stay as
-    # read-only symlinks to the persistent Kaggle Dataset.
+    # Manifests are writable local copies; multi-GB model blobs stay read-only
+    # symlinks to the persistent private Kaggle Dataset. No model pull/create.
     shutil.copy2(manifest_src, BASE_MODEL_DIR / BASE_TAG)
     shutil.copy2(manifest_src, ALIAS_MODEL_DIR / ALIAS_TAG)
     os.environ["OLLAMA_MODELS"] = str(LOCAL_MODELS)
@@ -75,12 +75,18 @@ def stage_persistent_cache() -> None:
 
 
 def load_bootstrap_config() -> dict:
+    if isinstance(EMBEDDED_RUNTIME_CONFIG, dict) and int(EMBEDDED_RUNTIME_CONFIG.get("generation", 0)) > 0:
+        return dict(EMBEDDED_RUNTIME_CONFIG)
     path = SCRIPT_DIR / "runtime_config.json"
     if path.is_file():
         return json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(EMBEDDED_RUNTIME_CONFIG, dict) and int(EMBEDDED_RUNTIME_CONFIG.get("generation", 0)) > 0:
-        return dict(EMBEDDED_RUNTIME_CONFIG)
     raise RuntimeError("RUNTIME_CONFIG_MISSING")
+
+
+def get_embedded_api_key() -> str:
+    if not isinstance(EMBEDDED_PROXY_API_KEY, str) or len(EMBEDDED_PROXY_API_KEY) < 32:
+        raise RuntimeError("EMBEDDED_PROXY_API_KEY_MISSING")
+    return EMBEDDED_PROXY_API_KEY
 
 
 def download_text_file(url: str, target: pathlib.Path) -> None:
@@ -118,8 +124,6 @@ INFLIGHT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def ensure_model_from_cache() -> None:
-    # Strict cache-only path: never download model weights and never mutate the
-    # read-only persistent dataset blobs.
     subprocess.run(["ollama", "show", worker.BASE_MODEL], check=True)
     subprocess.run(["ollama", "show", worker.MODEL], check=True)
 
@@ -187,30 +191,34 @@ def has_inflight_requests() -> bool:
         return False
 
 
+def announce_tunnel(tunnel_url: str) -> None:
+    # URL is not an authentication credential. The bearer key is never printed.
+    print(f"KAGGLE_TUNNEL_URL={tunnel_url}", flush=True)
+
+
 def main_with_idle_shutdown() -> None:
     cfg = worker.load_runtime_config()
     generation = int(cfg["generation"])
     max_runtime = int(cfg.get("max_runtime_seconds", 21600))
     idle_timeout = int(cfg.get("idle_timeout_seconds", 300))
-    startup_grace = int(cfg.get("startup_grace_seconds", 480))
+    startup_grace = int(cfg.get("startup_grace_seconds", 120))
 
     initial = worker.get_remote_state()
     if initial.get("desired") != "RUN" or int(initial.get("generation", -1)) != generation:
         print("CONTROL_STATE_NOT_RUN: EXIT", flush=True)
         return
 
-    github_token = worker.get_github_token()
+    api_key = get_embedded_api_key()
     cloudflared = worker.install_runtime()
     ollama_proc = worker.start_ollama()
     worker.ensure_model()
 
-    api_key = worker.secrets.token_urlsafe(40)
     proxy_proc = worker.start_proxy(api_key)
     tunnel_proc, tunnel_url = worker.start_tunnel(cloudflared)
     if not worker.validate_public_health(tunnel_url, api_key):
         raise RuntimeError("PUBLIC_TUNNEL_HEALTH_FAILED")
-    worker.sync_github_secrets(github_token, f"{tunnel_url}/v1", api_key)
 
+    announce_tunnel(tunnel_url)
     print(f"WORKER_GENERATION={generation}", flush=True)
     print(f"GPU_IDLE_POLICY=startup_grace:{startup_grace}s idle:{idle_timeout}s hard_max:{max_runtime}s", flush=True)
     print("KAGGLE_GPU_WORKER: READY", flush=True)
@@ -245,10 +253,9 @@ def main_with_idle_shutdown() -> None:
         if tunnel_proc.poll() is not None:
             print("TUNNEL_WATCHDOG_RESTART", flush=True)
             tunnel_proc, tunnel_url = worker.start_tunnel(cloudflared)
-            if worker.validate_public_health(tunnel_url, api_key):
-                worker.sync_github_secrets(github_token, f"{tunnel_url}/v1", api_key)
-            else:
+            if not worker.validate_public_health(tunnel_url, api_key):
                 raise RuntimeError("TUNNEL_RESTART_HEALTH_FAILED")
+            announce_tunnel(tunnel_url)
 
         time.sleep(30)
     else:
