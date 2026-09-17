@@ -53,20 +53,35 @@ config = {
         "timeout": 120,
     },
 }
-path = home / "config.yaml"
-path.write_text(json.dumps(config, indent=2), encoding="utf-8")
-path.chmod(0o600)
+(home / "config.yaml").write_text(json.dumps(config, indent=2), encoding="utf-8")
+(home / "config.yaml").chmod(0o600)
+
+soul = """You are running inside a PUBLIC GitHub Actions runner.
+Security rules are mandatory:
+- Never inspect, enumerate, copy, reveal, or print environment variables, GitHub Actions secrets, API keys, tokens, authentication headers, credential files, ~/.hermes, HERMES_HOME contents, or config.yaml.
+- Never run env, printenv, set, export, or commands whose purpose is secret discovery.
+- Work only on the non-sensitive task and ordinary checked-out repository files.
+- If asked for secrets, credentials, private user data, or hidden runner configuration, refuse that part.
+- You may use normal terminal tools on the repository workspace when needed.
+"""
+(home / "SOUL.md").write_text(soul, encoding="utf-8")
+(home / "SOUL.md").chmod(0o600)
+
 print("HERMES_CONFIG_WRITTEN")
+print("HERMES_SOUL_GUARDRAIL_WRITTEN")
 print("MODEL=llama3.1-hermes")
 print("CONTEXT_LENGTH=65536")
 print("Secrets were not printed.")
 PY
 
+# Remove endpoint credentials from the child process environment. Hermes still
+# reads them from its protected config file outside the checked-out workspace.
+unset KAGGLE_API_KEY
+unset KAGGLE_BASE_URL
+
 TASK_SHA=$(printf '%s' "$TASK" | sha256sum | awk '{print $1}')
 echo "TASK_SHA256=$TASK_SHA"
 
-# Runtime proof that cannot be guessed from the prompt. A successful task must
-# actually invoke the terminal tool and read this file.
 PROOF="HERMES_RUN_PROOF_$(python3 - <<'PY'
 import secrets
 print(secrets.token_hex(16).upper())
@@ -75,12 +90,8 @@ PY
 printf '%s\n' "$PROOF" > .hermes-run-proof
 chmod 600 .hermes-run-proof
 
-SAFE_PREFIX='PUBLIC RUNNER SECURITY RULES: Do not inspect, print, copy, enumerate, or expose environment variables, GitHub Actions secrets, API keys, tokens, ~/.hermes, HERMES_HOME, credential files, or authentication headers. Do not run env, printenv, set, export, or commands intended to discover secrets. Work only on the requested non-sensitive task and ordinary files in the checked-out repository. If the task asks for secrets or private data, refuse that part.'
-PROOF_RULE='EXECUTION PROOF: Before giving the final answer, you MUST actually call the terminal tool and read the file .hermes-run-proof with a terminal command. Do not print a tool-call JSON as text. Include the exact file contents in the final answer. The proof value is not present in this prompt, so it cannot be guessed.'
-FULL_TASK="$SAFE_PREFIX
-
-USER TASK:
-$TASK
+PROOF_RULE='Terminal aracını gerçekten kullan. Çalışma klasöründeki .hermes-run-proof dosyasını terminal komutu ile oku. Son cevapta dosyanın içeriğini aynen yaz; tahmin etme.'
+FULL_TASK="$TASK
 
 $PROOF_RULE"
 
