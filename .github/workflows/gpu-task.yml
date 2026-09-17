@@ -144,6 +144,11 @@ jobs:
           wait "$log_pid" 2>/dev/null || true
 
           if [[ "$passed" != "1" ]]; then
+            kaggle kernels logs "$KERNEL_ID" >>"$log_file" 2>&1 || true
+            grep -q 'GPU_TASK_PASS=1' "$log_file" && passed=1 || true
+          fi
+
+          if [[ "$passed" != "1" ]]; then
             echo 'GPU_TASK_WORKFLOW=FAIL'
             grep -E 'GPU_TASK_(ID|DECRYPT|MODEL_CACHE|ZSTD|OLLAMA_INSTALL|FATAL|PASS)' "$log_file" | tail -n 80 || true
             exit 4
