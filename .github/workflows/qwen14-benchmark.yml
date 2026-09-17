@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          kaggle kernels push -p qwen14_bench --accelerator NvidiaTeslaT4
+          kaggle kernels push -p qwen14_bench --accelerator NvidiaTeslaT4 --timeout 900
           echo 'QWEN14_BENCH_KERNEL_PUSH=PASS'
 
       - name: Wait for benchmark completion
