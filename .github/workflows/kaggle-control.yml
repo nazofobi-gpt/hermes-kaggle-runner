@@ -76,6 +76,8 @@ jobs:
           (root / 'runtime_config.json').write_text(json.dumps({
               'generation': int(os.environ['GENERATION']),
               'max_runtime_seconds': 21600,
+              'startup_grace_seconds': 480,
+              'idle_timeout_seconds': 300,
           }, indent=2) + '\n')
           (root / 'kernel-metadata.json').write_text(json.dumps({
               'id': f"{os.environ['KAGGLE_USER']}/hermes-gpu-worker",
