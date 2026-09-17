@@ -1,4 +1,4 @@
 MODE: terminal
 EXPECT: PUBLIC_TASK_PASS
 ---
-Terminal aracını gerçekten kullan. Terminalde `printf 'PUBLIC_TASK_PASS\n'` komutunu çalıştır. Son cevapta terminal çıktısını aynen yaz; başka hiçbir şey yazma.
+Terminal aracını kullan. Çalışma klasöründeki requests/acceptance_fixture.txt dosyasını terminal komutu ile oku. Son cevapta dosyanın içeriğini aynen yaz; tahmin etme.
