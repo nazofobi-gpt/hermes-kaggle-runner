@@ -1,0 +1,109 @@
+name: Qwen14 GPU Benchmark
+
+on:
+  push:
+    paths:
+      - 'control/qwen14_benchmark.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-qwen14-benchmark
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USER: nazofobigpt
+      DATASET_ID: nazofobigpt/hermes-qwen14-cache
+      KERNEL_ID: nazofobigpt/hermes-qwen14-benchmark
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_API_TOKEN:-}" || { echo 'KAGGLE_API_TOKEN missing'; exit 3; }
+          python3 -m pip install -q --upgrade kaggle
+          kaggle datasets status "$DATASET_ID"
+          echo 'QWEN14_BENCH_CACHE_PREFLIGHT=PASS'
+
+      - name: Prepare benchmark kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, os
+          root = pathlib.Path('qwen14_bench')
+          metadata = {
+              'id': os.environ['KERNEL_ID'],
+              'title': 'Hermes Qwen14 Benchmark',
+              'code_file': 'benchmark.py',
+              'language': 'python',
+              'kernel_type': 'script',
+              'is_private': True,
+              'enable_gpu': True,
+              'enable_internet': True,
+              'machine_shape': 'NvidiaTeslaT4',
+              'dataset_sources': [os.environ['DATASET_ID']],
+              'competition_sources': [],
+              'kernel_sources': [],
+              'model_sources': [],
+          }
+          (root / 'kernel-metadata.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Start Qwen14 benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle kernels push -p qwen14_bench --accelerator NvidiaTeslaT4
+          echo 'QWEN14_BENCH_KERNEL_PUSH=PASS'
+
+      - name: Wait for benchmark completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
+            echo "$status"
+            if grep -q 'COMPLETE' <<<"$status"; then
+              echo 'QWEN14_BENCH_KERNEL_COMPLETE=PASS'
+              exit 0
+            fi
+            if grep -Eq 'ERROR|CANCEL' <<<"$status"; then
+              echo 'QWEN14_BENCH_KERNEL_COMPLETE=FAIL'
+              exit 4
+            fi
+            sleep 10
+          done
+          echo 'QWEN14_BENCH_KERNEL_TIMEOUT'
+          exit 5
+
+      - name: Download and verify benchmark result
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/qwen14-output"
+          kaggle kernels output "$KERNEL_ID" -p "$RUNNER_TEMP/qwen14-output" -q
+          result=$(find "$RUNNER_TEMP/qwen14-output" -name qwen14_benchmark.json -print -quit)
+          test -n "$result" || { echo 'QWEN14_BENCH_RESULT_MISSING'; find "$RUNNER_TEMP/qwen14-output" -maxdepth 3 -type f -print; exit 6; }
+          cat "$result"
+          python3 - "$result" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+          print(f"QWEN14_RESULT_TOOL_CALLS={data.get('tool_successes')}/{data.get('tool_trials')}")
+          print(f"QWEN14_RESULT_BASIC_TPS={data.get('basic_tps')}")
+          print(f"QWEN14_RESULT_CODE_TPS={data.get('code_tps')}")
+          print(f"QWEN14_RESULT_GPU={data.get('gpu')}")
+          if not data.get('pass'):
+              raise SystemExit(7)
+          print('QWEN14_BENCHMARK_VERIFIED=PASS')
+          PY
