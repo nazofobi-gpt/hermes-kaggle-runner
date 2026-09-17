@@ -1,0 +1,102 @@
+name: Kaggle GPU Control
+
+on:
+  push:
+    paths:
+      - 'control/kaggle_state.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-gpu-control
+  cancel-in-progress: true
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read state
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          desired=$(jq -r '.desired' control/kaggle_state.json)
+          generation=$(jq -r '.generation' control/kaggle_state.json)
+          case "$desired" in RUN|STOP) ;; *) exit 2 ;; esac
+          [[ "$generation" =~ ^[0-9]+$ ]] || exit 2
+          echo "desired=$desired" >> "$GITHUB_OUTPUT"
+          echo "generation=$generation" >> "$GITHUB_OUTPUT"
+
+      - name: Accept stop
+        if: steps.state.outputs.desired == 'STOP'
+        run: echo 'KAGGLE_STOP_SIGNAL=PASS'
+
+      - name: Verify credential
+        if: steps.state.outputs.desired == 'RUN'
+        shell: bash
+        run: |
+          test -n "${KAGGLE_API_TOKEN:-}" || { echo 'KAGGLE_API_TOKEN missing'; exit 3; }
+
+      - name: Install Kaggle tools
+        if: steps.state.outputs.desired == 'RUN'
+        run: python3 -m pip install -q --upgrade kaggle kagglehub
+
+      - name: Prepare private kernel
+        if: steps.state.outputs.desired == 'RUN'
+        id: kernel
+        shell: bash
+        env:
+          GENERATION: ${{ steps.state.outputs.generation }}
+        run: |
+          set -euo pipefail
+          user=$(python3 - <<'PY'
+          import kagglehub
+          info = kagglehub.whoami()
+          print(info['username'])
+          PY
+          )
+          echo "user=$user" >> "$GITHUB_OUTPUT"
+          export KAGGLE_USER="$user"
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path('kaggle')
+          (root / 'runtime_config.json').write_text(json.dumps({
+              'generation': int(os.environ['GENERATION']),
+              'max_runtime_seconds': 21600,
+          }, indent=2) + '\n')
+          (root / 'kernel-metadata.json').write_text(json.dumps({
+              'id': f"{os.environ['KAGGLE_USER']}/hermes-gpu-worker",
+              'title': 'Hermes GPU Worker',
+              'code_file': 'worker.py',
+              'language': 'python',
+              'kernel_type': 'script',
+              'is_private': True,
+              'enable_gpu': True,
+              'enable_internet': True,
+              'machine_shape': 'NvidiaTeslaT4',
+              'dataset_sources': [],
+              'competition_sources': [],
+              'kernel_sources': [],
+              'model_sources': [],
+          }, indent=2) + '\n')
+          PY
+
+      - name: Start Kaggle T4 worker
+        if: steps.state.outputs.desired == 'RUN'
+        shell: bash
+        env:
+          KAGGLE_USER: ${{ steps.kernel.outputs.user }}
+        run: |
+          set -euo pipefail
+          kaggle kernels push -p kaggle --accelerator NvidiaTeslaT4
+          echo 'KAGGLE_KERNEL_PUSH=PASS'
+          sleep 5
+          kaggle kernels status "$KAGGLE_USER/hermes-gpu-worker" || true
