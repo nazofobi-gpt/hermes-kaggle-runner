@@ -1,5 +1,5 @@
 {
-  "desired": "STOP",
-  "generation": 0,
-  "reason": "initial-safe-state"
+  "desired": "RUN",
+  "generation": 1,
+  "reason": "first-automatic-start-test"
 }
