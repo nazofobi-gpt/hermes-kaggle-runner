@@ -4,10 +4,11 @@ import pathlib
 import shutil
 import subprocess
 import time
+import traceback
 
 import requests
 
-CACHE_ROOT = pathlib.Path('/kaggle/input/hermes-qwen14-cache')
+INPUT_ROOT = pathlib.Path('/kaggle/input')
 WORK = pathlib.Path('/kaggle/working')
 LOCAL_MODELS = WORK / 'qwen14-ollama-models'
 BASE_MODEL = 'qwen2.5-coder:14b-instruct-q4_K_M'
@@ -31,11 +32,50 @@ def wait_http(url, timeout=90):
     return False
 
 
+def discover_cache_root() -> pathlib.Path:
+    if not INPUT_ROOT.exists():
+        raise RuntimeError(f'KAGGLE_INPUT_MISSING:{INPUT_ROOT}')
+
+    top = sorted(str(p) for p in INPUT_ROOT.iterdir())
+    print('QWEN14_INPUT_DIRS=' + json.dumps(top), flush=True)
+
+    # Primary discovery: identify our cache by its own index, independent of
+    # whatever mount directory name Kaggle assigns to the dataset.
+    for index_path in INPUT_ROOT.rglob('cache-index.json'):
+        try:
+            data = json.loads(index_path.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if data.get('base_model') == BASE_MODEL:
+            root = index_path.parent
+            manifest = root / 'base-manifest.json'
+            blobs = list(root.glob('sha256-*'))
+            if manifest.is_file() and blobs:
+                print(f'QWEN14_CACHE_ROOT={root}', flush=True)
+                return root
+
+    # Defensive fallback for a cache produced by an older builder without an
+    # index file. Only accept an unambiguous manifest+blob directory.
+    candidates = []
+    for manifest in INPUT_ROOT.rglob('base-manifest.json'):
+        root = manifest.parent
+        if list(root.glob('sha256-*')):
+            candidates.append(root)
+    if len(candidates) == 1:
+        print(f'QWEN14_CACHE_ROOT={candidates[0]}', flush=True)
+        return candidates[0]
+
+    discovered = sorted(str(p) for p in INPUT_ROOT.rglob('cache-index.json'))
+    raise RuntimeError(
+        'QWEN14_CACHE_DISCOVERY_FAILED:'
+        f'indexes={discovered}:candidates={[str(p) for p in candidates]}'
+    )
+
+
 def stage_cache():
-    if not CACHE_ROOT.exists():
-        raise RuntimeError(f'CACHE_MISSING:{CACHE_ROOT}')
-    manifest_src = CACHE_ROOT / 'base-manifest.json'
-    blobs = sorted(CACHE_ROOT.glob('sha256-*'))
+    cache_root = discover_cache_root()
+    manifest_src = cache_root / 'base-manifest.json'
+    blobs = sorted(cache_root.glob('sha256-*'))
     if not manifest_src.exists() or not blobs:
         raise RuntimeError('CACHE_INCOMPLETE')
 
@@ -54,6 +94,10 @@ def stage_cache():
 
 
 def install_ollama():
+    # Kaggle images can vary. zstd is needed by the Ollama installer on some
+    # images, so install it only when absent.
+    if shutil.which('zstd') is None:
+        run(['bash', '-lc', 'apt-get update -qq && apt-get install -y -qq zstd'])
     run(['bash', '-lc', 'curl -fsSL https://ollama.com/install.sh | sh'])
 
 
@@ -73,6 +117,7 @@ def start_ollama():
 
 
 def create_test_model(env):
+    # Strict cache-only validation: no `ollama pull` is allowed here.
     run(['ollama', 'show', BASE_MODEL], env=env, stdout=subprocess.DEVNULL)
     print('QWEN14_MODEL_SHOW: PASS', flush=True)
     modelfile = WORK / 'Modelfile.qwen14'
@@ -211,4 +256,14 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except BaseException as exc:
+        failure = {
+            'error_type': type(exc).__name__,
+            'error': str(exc),
+            'traceback': traceback.format_exc(),
+        }
+        (WORK / 'qwen14_failure.json').write_text(json.dumps(failure, indent=2) + '\n', encoding='utf-8')
+        print(f'QWEN14_FATAL={type(exc).__name__}:{exc}', flush=True)
+        raise
