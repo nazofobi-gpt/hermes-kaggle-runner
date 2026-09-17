@@ -49,7 +49,7 @@ jobs:
         if: steps.state.outputs.desired == 'RUN'
         run: python3 -m pip install -q --upgrade kaggle kagglehub
 
-      - name: Prepare private kernel
+      - name: Prepare private cached-model kernel
         if: steps.state.outputs.desired == 'RUN'
         id: kernel
         shell: bash
@@ -65,6 +65,11 @@ jobs:
           )
           echo "user=$user" >> "$GITHUB_OUTPUT"
           export KAGGLE_USER="$user"
+
+          kaggle datasets status "$KAGGLE_USER/hermes-ollama-cache" >/tmp/model-cache-status.txt
+          cat /tmp/model-cache-status.txt
+          echo 'MODEL_CACHE_DATASET_PREFLIGHT=PASS'
+
           python3 - <<'PY'
           import json, os, pathlib
           root = pathlib.Path('kaggle')
@@ -75,14 +80,14 @@ jobs:
           (root / 'kernel-metadata.json').write_text(json.dumps({
               'id': f"{os.environ['KAGGLE_USER']}/hermes-gpu-worker",
               'title': 'Hermes GPU Worker',
-              'code_file': 'worker.py',
+              'code_file': 'cached_entry.py',
               'language': 'python',
               'kernel_type': 'script',
               'is_private': True,
               'enable_gpu': True,
               'enable_internet': True,
               'machine_shape': 'NvidiaTeslaT4',
-              'dataset_sources': [],
+              'dataset_sources': [f"{os.environ['KAGGLE_USER']}/hermes-ollama-cache"],
               'competition_sources': [],
               'kernel_sources': [],
               'model_sources': [],
