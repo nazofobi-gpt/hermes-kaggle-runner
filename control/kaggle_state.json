@@ -1,5 +1,5 @@
 {
-  "desired": "STOP",
-  "generation": 6,
-  "reason": "automation-e2e-test-complete-blocked-on-kaggle-secret-attachment"
+  "desired": "RUN",
+  "generation": 7,
+  "reason": "automation-e2e-without-kaggle-sync-secret"
 }
