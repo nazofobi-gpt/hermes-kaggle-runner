@@ -89,7 +89,7 @@ jobs:
 
           metadata = {
               "id": os.environ["KERNEL_ID"],
-              "title": "Hermes Encrypted GPU Task",
+              "title": "Hermes GPU Task",
               "code_file": "gpu_task_worker.py",
               "language": "python",
               "kernel_type": "script",
