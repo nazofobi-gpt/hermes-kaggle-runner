@@ -21,6 +21,11 @@ jobs:
             echo "PROBE_KERNEL=$KERNEL_ID"
             status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
             echo "$status"
+
+            live_log="$RUNNER_TEMP/$(basename "$KERNEL_ID").log"
+            kaggle kernels logs "$KERNEL_ID" >"$live_log" 2>&1 || true
+            grep -E 'GPU_TASK_(ID|DECRYPT|MODEL_CACHE|ZSTD|OLLAMA_INSTALL|FATAL|PASS|RESULT_B64)' "$live_log" | tail -n 100 || true
+
             if grep -Eq 'ERROR|COMPLETE|CANCEL' <<<"$status"; then
               mkdir -p "$RUNNER_TEMP/out"
               rm -rf "$RUNNER_TEMP/out"/*
