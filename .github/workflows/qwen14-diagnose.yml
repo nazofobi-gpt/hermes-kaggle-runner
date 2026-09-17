@@ -1,0 +1,37 @@
+name: Qwen14 Benchmark Diagnostics
+
+on:
+  push:
+    paths:
+      - 'control/qwen14_diagnose.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KERNEL_ID: nazofobigpt/hermes-qwen14-benchmark
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch failed kernel outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install -q --upgrade kaggle
+          mkdir -p "$RUNNER_TEMP/qwen14-diag"
+          set +e
+          kaggle kernels output "$KERNEL_ID" -p "$RUNNER_TEMP/qwen14-diag" -q
+          rc=$?
+          set -e
+          echo "KERNEL_OUTPUT_RC=$rc"
+          find "$RUNNER_TEMP/qwen14-diag" -maxdepth 4 -type f -printf '%p %s bytes\n' || true
+          for f in $(find "$RUNNER_TEMP/qwen14-diag" -maxdepth 4 -type f \( -name '*.log' -o -name '*.txt' -o -name '*.json' \)); do
+            echo "===== $f ====="
+            tail -n 300 "$f" || true
+          done
