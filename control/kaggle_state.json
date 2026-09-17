@@ -1,5 +1,5 @@
 {
   "desired": "RUN",
-  "generation": 1,
-  "reason": "first-automatic-start-test"
+  "generation": 2,
+  "reason": "automatic-start-test-after-username-fix"
 }
