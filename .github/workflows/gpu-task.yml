@@ -113,7 +113,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          kaggle kernels push -p kaggle --accelerator NvidiaTeslaT4
+          kaggle kernels push -p kaggle --accelerator NvidiaTeslaT4 --timeout 600
           echo 'GPU_TASK_KERNEL_PUSH=PASS'
 
       - name: Wait for encrypted result
@@ -124,11 +124,11 @@ jobs:
           set -euo pipefail
           log_file="$RUNNER_TEMP/gpu-task.log"
           : > "$log_file"
-          timeout 900s kaggle kernels logs "$KERNEL_ID" --follow >"$log_file" 2>&1 &
+          timeout 660s kaggle kernels logs "$KERNEL_ID" --follow >"$log_file" 2>&1 &
           log_pid=$!
 
           passed=0
-          for _ in $(seq 1 180); do
+          for _ in $(seq 1 132); do
             if grep -q 'GPU_TASK_PASS=1' "$log_file"; then
               passed=1
               break
