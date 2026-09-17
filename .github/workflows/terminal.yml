@@ -1,0 +1,26 @@
+name: Remote Terminal
+
+on:
+  push:
+    paths:
+      - 'commands/run.sh'
+      - '.github/workflows/terminal.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terminal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run command script
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x commands/run.sh
+          ./commands/run.sh
