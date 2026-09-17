@@ -1,0 +1,5 @@
+{
+  "generation": 1,
+  "model": "qwen2.5-coder:14b-instruct-q4_K_M",
+  "reason": "build-persistent-qwen14-cache"
+}
