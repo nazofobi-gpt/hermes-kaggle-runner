@@ -1,0 +1,35 @@
+name: Kaggle Model Call
+
+on:
+  push:
+    paths:
+      - 'requests/prompt.txt'
+      - 'scripts/call_kaggle.py'
+      - '.github/workflows/kaggle-model.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  call-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAGGLE_BASE_URL: ${{ secrets.KAGGLE_BASE_URL }}
+      KAGGLE_API_KEY: ${{ secrets.KAGGLE_API_KEY }}
+      KAGGLE_MODEL: llama3.1-hermes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required secrets exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KAGGLE_BASE_URL" || { echo 'KAGGLE_BASE_URL secret is missing'; exit 1; }
+          test -n "$KAGGLE_API_KEY" || { echo 'KAGGLE_API_KEY secret is missing'; exit 1; }
+          echo 'Secrets are configured.'
+
+      - name: Call Kaggle GPU model
+        run: python3 scripts/call_kaggle.py
