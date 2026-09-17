@@ -18,17 +18,24 @@ fi
 
 MODE="auto"
 EXPECT=""
+DYNAMIC_FIXTURE="no"
 TASK="$RAW_TASK"
 if grep -q '^---$' "$TASK_FILE"; then
   MODE=$(sed -n 's/^MODE:[[:space:]]*//p' "$TASK_FILE" | head -n1)
   EXPECT=$(sed -n 's/^EXPECT:[[:space:]]*//p' "$TASK_FILE" | head -n1)
+  DYNAMIC_FIXTURE=$(sed -n 's/^DYNAMIC_FIXTURE:[[:space:]]*//p' "$TASK_FILE" | head -n1)
   TASK=$(sed '1,/^---$/d' "$TASK_FILE")
   MODE="${MODE:-auto}"
+  DYNAMIC_FIXTURE="${DYNAMIC_FIXTURE:-no}"
 fi
 
 case "$MODE" in
   auto|chat|terminal) ;;
   *) echo "TASK_MODE_INVALID: $MODE" >&2; exit 2 ;;
+esac
+case "$DYNAMIC_FIXTURE" in
+  yes|no) ;;
+  *) echo "DYNAMIC_FIXTURE_INVALID: $DYNAMIC_FIXTURE" >&2; exit 2 ;;
 esac
 
 if [[ -z "${TASK//[[:space:]]/}" ]]; then
@@ -37,11 +44,7 @@ if [[ -z "${TASK//[[:space:]]/}" ]]; then
 fi
 
 echo "TASK_MODE=$MODE"
-if [[ -n "$EXPECT" ]]; then
-  echo "TASK_EXPECTATION_CONFIGURED=yes"
-else
-  echo "TASK_EXPECTATION_CONFIGURED=no"
-fi
+echo "TASK_DYNAMIC_FIXTURE=$DYNAMIC_FIXTURE"
 
 export PATH="$HOME/.local/bin:$PATH"
 export HERMES_HOME="$RUNNER_TEMP/hermes-home"
@@ -104,9 +107,27 @@ print("Secrets were not printed.")
 PY
 
 # Credentials are needed only to create Hermes' protected configuration.
-# Remove them from the agent-controlled child process environment.
+# Remove them before any agent-controlled terminal command is possible.
 unset KAGGLE_API_KEY
 unset KAGGLE_BASE_URL
+
+# Optional dynamic task fixture: this value is created only at runtime and is
+# absent from the task prompt. It proves that a task result came from an actual
+# tool observation rather than memorization or prompt imitation.
+if [[ "$DYNAMIC_FIXTURE" == "yes" ]]; then
+  EXPECT="HERMES_TASK_FIXTURE_$(python3 - <<'PY'
+import secrets
+print(secrets.token_hex(16).upper())
+PY
+)"
+  printf '%s\n' "$EXPECT" > .hermes-task-fixture
+  chmod 600 .hermes-task-fixture
+  echo 'TASK_EXPECTATION_CONFIGURED=dynamic'
+elif [[ -n "$EXPECT" ]]; then
+  echo 'TASK_EXPECTATION_CONFIGURED=static'
+else
+  echo 'TASK_EXPECTATION_CONFIGURED=no'
+fi
 
 TASK_SHA=$(printf '%s' "$TASK" | sha256sum | awk '{print $1}')
 echo "TASK_SHA256=$TASK_SHA"
@@ -176,6 +197,9 @@ fi
 printf '%s\n' 'HERMES_TASK_OUTPUT_BEGIN'
 printf '%s\n' "$TASK_OUTPUT"
 printf '%s\n' 'HERMES_TASK_OUTPUT_END'
+
+# Remove runtime-only fixture after the task has had a chance to read it.
+rm -f .hermes-task-fixture
 
 if [[ "$TASK_RC" -ne 0 ]]; then
   echo "HERMES_TASK: FAIL rc=$TASK_RC"
