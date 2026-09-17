@@ -1,5 +1,4 @@
 import os
-import pathlib
 import time
 import uuid
 
@@ -13,7 +12,7 @@ INFLIGHT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def touch_activity() -> None:
-    tmp = ACTIVITY_FILE.with_suffix(".tmp")
+    tmp = ACTIVITY_FILE.with_name(f".{ACTIVITY_FILE.name}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(str(time.time()), encoding="utf-8")
     tmp.replace(ACTIVITY_FILE)
 
