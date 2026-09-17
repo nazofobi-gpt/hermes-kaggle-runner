@@ -1,0 +1,37 @@
+name: Hermes Public Task
+
+on:
+  push:
+    paths:
+      - 'requests/hermes_task.txt'
+      - 'scripts/run_public_task.sh'
+      - '.github/workflows/hermes-task.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run-public-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KAGGLE_BASE_URL: ${{ secrets.KAGGLE_BASE_URL }}
+      KAGGLE_API_KEY: ${{ secrets.KAGGLE_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KAGGLE_BASE_URL" || { echo 'KAGGLE_BASE_URL missing'; exit 1; }
+          test -n "$KAGGLE_API_KEY" || { echo 'KAGGLE_API_KEY missing'; exit 1; }
+          echo 'Kaggle endpoint secrets are configured.'
+
+      - name: Run Hermes public task
+        shell: bash
+        run: |
+          chmod +x scripts/run_public_task.sh
+          scripts/run_public_task.sh requests/hermes_task.txt
