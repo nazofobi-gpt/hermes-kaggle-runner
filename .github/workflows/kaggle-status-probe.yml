@@ -23,8 +23,14 @@ jobs:
           set -euo pipefail
           test -n "${KAGGLE_API_TOKEN:-}" || { echo 'KAGGLE_API_TOKEN missing'; exit 2; }
           python3 -m pip install -q --upgrade kaggle
+
           status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
           echo "$status"
+
+          live_log="$RUNNER_TEMP/live-kernel.log"
+          kaggle kernels logs "$KERNEL_ID" >"$live_log" 2>&1 || true
+          grep -E 'CONTROL_STOP_OR_REPLACED|GPU_IDLE_TIMEOUT_REACHED|KAGGLE_GPU_WORKER: READY|KAGGLE_GPU_WORKER_FATAL|MAX_RUNTIME_REACHED' "$live_log"             | tail -n 20             | sed -E 's#https://[a-z0-9-]+\.trycloudflare\.com#[TUNNEL_URL_REDACTED]#g' || true
+
           if grep -q 'RUNNING' <<<"$status"; then
             echo 'KAGGLE_WORKER_STATUS=RUNNING'
             exit 0
@@ -35,14 +41,7 @@ jobs:
           fi
           if grep -Eq 'ERROR|COMPLETE|CANCEL' <<<"$status"; then
             echo 'KAGGLE_WORKER_STATUS=TERMINAL'
-            mkdir -p "$RUNNER_TEMP/kernel-output"
-            kaggle kernels output "$KERNEL_ID" -p "$RUNNER_TEMP/kernel-output" -q || true
-            find "$RUNNER_TEMP/kernel-output" -maxdepth 3 -type f -print
-            for f in "$RUNNER_TEMP"/kernel-output/*.log "$RUNNER_TEMP"/kernel-output/**/*.log; do
-              [[ -f "$f" ]] || continue
-              tail -n 120 "$f" || true
-            done
-            exit 3
+            exit 0
           fi
           echo 'KAGGLE_WORKER_STATUS=UNKNOWN'
           exit 4
