@@ -1,5 +1,5 @@
 {
   "desired": "RUN",
-  "generation": 7,
-  "reason": "automation-e2e-without-kaggle-sync-secret"
+  "generation": 8,
+  "reason": "automation-e2e-after-zstd-bootstrap"
 }
