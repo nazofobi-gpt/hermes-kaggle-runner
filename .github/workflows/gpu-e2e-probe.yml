@@ -1,0 +1,71 @@
+name: GPU End-to-End Probe
+
+on:
+  push:
+    paths:
+      - 'control/gpu_probe.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpu-e2e-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAGGLE_BASE_URL: ${{ secrets.KAGGLE_BASE_URL }}
+      KAGGLE_API_KEY: ${{ secrets.KAGGLE_API_KEY }}
+    steps:
+      - name: Verify endpoint secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_BASE_URL:-}" || { echo 'GPU_PROBE_SECRET_BASE_URL_MISSING'; exit 2; }
+          test -n "${KAGGLE_API_KEY:-}" || { echo 'GPU_PROBE_SECRET_API_KEY_MISSING'; exit 2; }
+          echo 'GPU_PROBE_SECRETS_PRESENT=PASS'
+
+      - name: Authenticated health probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${KAGGLE_BASE_URL%/}"
+          root="${base%/v1}"
+          code=$(curl -sS -o "$RUNNER_TEMP/health.json" -w '%{http_code}' \
+            --connect-timeout 15 --max-time 30 \
+            -H "Authorization: Bearer $KAGGLE_API_KEY" \
+            "$root/health" || true)
+          if [[ "$code" != "200" ]]; then
+            echo "GPU_PROBE_HEALTH=FAIL http=$code"
+            exit 3
+          fi
+          jq -e '.ok == true' "$RUNNER_TEMP/health.json" >/dev/null
+          echo 'GPU_PROBE_HEALTH=PASS'
+
+      - name: Real model inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${KAGGLE_BASE_URL%/}"
+          token="GPU_AUTOMATION_E2E_PASS"
+          code=$(curl -sS -o "$RUNNER_TEMP/chat.json" -w '%{http_code}' \
+            --connect-timeout 15 --max-time 360 \
+            -H "Authorization: Bearer $KAGGLE_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg token "$token" '{model:"llama3.1-hermes",messages:[{role:"user",content:("Reply exactly " + $token)}],temperature:0,stream:false}')" \
+            "$base/chat/completions" || true)
+          if [[ "$code" != "200" ]]; then
+            echo "GPU_PROBE_INFERENCE=FAIL http=$code"
+            exit 4
+          fi
+          content=$(jq -r '.choices[0].message.content // ""' "$RUNNER_TEMP/chat.json")
+          if ! grep -Fq "$token" <<<"$content"; then
+            echo 'GPU_PROBE_INFERENCE=FAIL token-mismatch'
+            exit 5
+          fi
+          echo 'GPU_PROBE_INFERENCE=PASS'
+          echo 'GPU_AUTOMATION_BACKEND=PASS'
