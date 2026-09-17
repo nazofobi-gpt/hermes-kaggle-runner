@@ -12,8 +12,9 @@ INPUT_ROOT = pathlib.Path('/kaggle/input')
 WORK = pathlib.Path('/kaggle/working')
 LOCAL_MODELS = WORK / 'qwen14-ollama-models'
 BASE_MODEL = 'qwen2.5-coder:14b-instruct-q4_K_M'
-TEST_MODEL = 'qwen14-hermes-bench'
+TEST_MODEL = BASE_MODEL
 OLLAMA_URL = 'http://127.0.0.1:11434'
+CONTEXT = 16384
 
 
 def run(cmd, **kwargs):
@@ -36,11 +37,7 @@ def discover_cache_root() -> pathlib.Path:
     if not INPUT_ROOT.exists():
         raise RuntimeError(f'KAGGLE_INPUT_MISSING:{INPUT_ROOT}')
 
-    top = sorted(str(p) for p in INPUT_ROOT.iterdir())
-    print('QWEN14_INPUT_DIRS=' + json.dumps(top), flush=True)
-
-    # Primary discovery: identify our cache by its own index, independent of
-    # whatever mount directory name Kaggle assigns to the dataset.
+    print('QWEN14_INPUT_DIRS=' + json.dumps(sorted(str(p) for p in INPUT_ROOT.iterdir())), flush=True)
     for index_path in INPUT_ROOT.rglob('cache-index.json'):
         try:
             data = json.loads(index_path.read_text(encoding='utf-8'))
@@ -48,14 +45,10 @@ def discover_cache_root() -> pathlib.Path:
             continue
         if data.get('base_model') == BASE_MODEL:
             root = index_path.parent
-            manifest = root / 'base-manifest.json'
-            blobs = list(root.glob('sha256-*'))
-            if manifest.is_file() and blobs:
+            if (root / 'base-manifest.json').is_file() and list(root.glob('sha256-*')):
                 print(f'QWEN14_CACHE_ROOT={root}', flush=True)
                 return root
 
-    # Defensive fallback for a cache produced by an older builder without an
-    # index file. Only accept an unambiguous manifest+blob directory.
     candidates = []
     for manifest in INPUT_ROOT.rglob('base-manifest.json'):
         root = manifest.parent
@@ -64,12 +57,7 @@ def discover_cache_root() -> pathlib.Path:
     if len(candidates) == 1:
         print(f'QWEN14_CACHE_ROOT={candidates[0]}', flush=True)
         return candidates[0]
-
-    discovered = sorted(str(p) for p in INPUT_ROOT.rglob('cache-index.json'))
-    raise RuntimeError(
-        'QWEN14_CACHE_DISCOVERY_FAILED:'
-        f'indexes={discovered}:candidates={[str(p) for p in candidates]}'
-    )
+    raise RuntimeError(f'QWEN14_CACHE_DISCOVERY_FAILED:{[str(p) for p in candidates]}')
 
 
 def stage_cache():
@@ -94,8 +82,6 @@ def stage_cache():
 
 
 def install_ollama():
-    # Kaggle images can vary. zstd is needed by the Ollama installer on some
-    # images, so install it only when absent.
     if shutil.which('zstd') is None:
         run(['bash', '-lc', 'apt-get update -qq && apt-get install -y -qq zstd'])
     run(['bash', '-lc', 'curl -fsSL https://ollama.com/install.sh | sh'])
@@ -108,6 +94,7 @@ def start_ollama():
         'OLLAMA_HOST': '127.0.0.1:11434',
         'OLLAMA_KEEP_ALIVE': '-1',
         'OLLAMA_NUM_PARALLEL': '1',
+        'OLLAMA_CONTEXT_LENGTH': str(CONTEXT),
     })
     log = open(WORK / 'qwen14_ollama.log', 'w', buffering=1)
     proc = subprocess.Popen(['ollama', 'serve'], env=env, stdout=log, stderr=subprocess.STDOUT, text=True)
@@ -116,16 +103,18 @@ def start_ollama():
     return proc, env
 
 
-def create_test_model(env):
-    # Strict cache-only validation: no `ollama pull` is allowed here.
+def verify_cached_model(env):
     run(['ollama', 'show', BASE_MODEL], env=env, stdout=subprocess.DEVNULL)
     print('QWEN14_MODEL_SHOW: PASS', flush=True)
-    modelfile = WORK / 'Modelfile.qwen14'
-    modelfile.write_text(f'FROM {BASE_MODEL}\nPARAMETER num_ctx 16384\n', encoding='utf-8')
-    run(['ollama', 'create', TEST_MODEL, '-f', str(modelfile)], env=env)
+    print(f'QWEN14_CONTEXT={CONTEXT}', flush=True)
+    print('QWEN14_NO_PULL_NO_CREATE: PASS', flush=True)
 
 
 def chat(payload, timeout=300):
+    payload = dict(payload)
+    options = dict(payload.get('options') or {})
+    options['num_ctx'] = CONTEXT
+    payload['options'] = options
     r = requests.post(f'{OLLAMA_URL}/api/chat', json=payload, timeout=timeout)
     r.raise_for_status()
     return r.json()
@@ -141,14 +130,15 @@ def main():
     result = {
         'model': TEST_MODEL,
         'base_model': BASE_MODEL,
-        'context': 16384,
+        'context': CONTEXT,
         'tool_trials': 5,
+        'cache_only': True,
     }
     stage_cache()
     install_ollama()
     proc, env = start_ollama()
     try:
-        create_test_model(env)
+        verify_cached_model(env)
 
         warm = chat({
             'model': TEST_MODEL,
@@ -191,8 +181,7 @@ def main():
                 'stream': False,
                 'options': {'temperature': 0},
             })
-            elapsed = time.time() - started
-            tool_seconds.append(round(elapsed, 3))
+            tool_seconds.append(round(time.time() - started, 3))
             tool_tps.append(round(tps(resp), 2))
             calls = (resp.get('message') or {}).get('tool_calls') or []
             ok = False
