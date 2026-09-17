@@ -1,0 +1,139 @@
+name: Build Qwen14 Persistent Cache
+
+on:
+  push:
+    paths:
+      - 'control/qwen14_cache.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-qwen14-cache
+  cancel-in-progress: false
+
+jobs:
+  build-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USER: nazofobigpt
+      DATASET_ID: nazofobigpt/hermes-qwen14-cache
+      BASE_MODEL: qwen2.5-coder:14b-instruct-q4_K_M
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Kaggle credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_API_TOKEN:-}" || { echo 'KAGGLE_API_TOKEN missing'; exit 3; }
+
+      - name: Install Kaggle CLI
+        run: python3 -m pip install -q --upgrade kaggle
+
+      - name: Check existing Qwen14 cache
+        id: cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          if kaggle datasets status "$DATASET_ID" >/tmp/cache-status.txt 2>&1; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+            echo 'QWEN14_CACHE_DATASET: EXISTS'
+            cat /tmp/cache-status.txt
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+            echo 'QWEN14_CACHE_DATASET: MISSING'
+          fi
+
+      - name: Install Ollama
+        if: steps.cache.outputs.exists != 'true'
+        shell: bash
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Download Qwen14 once
+        if: steps.cache.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OLLAMA_HOST=127.0.0.1:11501
+          export OLLAMA_MODELS="$RUNNER_TEMP/qwen14-models"
+          mkdir -p "$OLLAMA_MODELS"
+          ollama serve >"$RUNNER_TEMP/qwen14-cache-serve.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for i in $(seq 1 45); do
+            if curl -fsS "http://$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS "http://$OLLAMA_HOST/api/tags" >/dev/null
+          ollama pull "$BASE_MODEL"
+          ollama show "$BASE_MODEL" >/dev/null
+          echo 'QWEN14_CACHE_DOWNLOAD_ONCE: PASS'
+
+      - name: Prepare private Qwen14 cache dataset
+        if: steps.cache.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OLLAMA_MODELS="$RUNNER_TEMP/qwen14-models"
+          src_manifest="$OLLAMA_MODELS/manifests/registry.ollama.ai/library/qwen2.5-coder/14b-instruct-q4_K_M"
+          test -f "$src_manifest"
+          shopt -s nullglob
+          blobs=("$OLLAMA_MODELS"/blobs/sha256-*)
+          test "${#blobs[@]}" -gt 0
+
+          dataset_dir="$RUNNER_TEMP/hermes-qwen14-cache"
+          mkdir -p "$dataset_dir"
+          cp "$src_manifest" "$dataset_dir/base-manifest.json"
+          for src in "${blobs[@]}"; do
+            dst="$dataset_dir/$(basename "$src")"
+            ln "$src" "$dst" 2>/dev/null || cp --reflink=auto "$src" "$dst"
+          done
+
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'hermes-qwen14-cache'
+          metadata = {
+              'title': 'Hermes Qwen2.5-Coder 14B Ollama Cache',
+              'id': os.environ['DATASET_ID'],
+              'licenses': [{'name': 'apache-2.0'}],
+              'description': 'Private persistent Ollama cache for Qwen2.5-Coder 14B used by the Hermes Kaggle GPU worker.',
+          }
+          (root / 'dataset-metadata.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
+          index = {
+              'base_model': os.environ['BASE_MODEL'],
+              'blob_count': len(list(root.glob('sha256-*'))),
+          }
+          (root / 'cache-index.json').write_text(json.dumps(index, indent=2) + '\n', encoding='utf-8')
+          PY
+
+          du -sh "$dataset_dir"
+          echo "QWEN14_CACHE_BLOBS=${#blobs[@]}"
+
+      - name: Create private Kaggle dataset
+        if: steps.cache.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle datasets create -p "$RUNNER_TEMP/hermes-qwen14-cache" -q
+          echo 'QWEN14_CACHE_DATASET_CREATE: PASS'
+
+      - name: Verify Qwen14 cache dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if kaggle datasets status "$DATASET_ID" >/tmp/final-qwen14-status.txt 2>&1; then
+              cat /tmp/final-qwen14-status.txt
+              echo 'QWEN14_CACHE_PERSISTENCE: PASS'
+              exit 0
+            fi
+            sleep 5
+          done
+          cat /tmp/final-qwen14-status.txt || true
+          echo 'QWEN14_CACHE_PERSISTENCE: FAIL'
+          exit 1
