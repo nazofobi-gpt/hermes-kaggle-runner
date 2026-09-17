@@ -19,6 +19,11 @@ GITHUB_OWNER = "nazofobi-gpt"
 GITHUB_REPO = "hermes-kaggle-runner"
 CONTEXT_LENGTH = 65536
 
+# GitHub Actions replaces this exact placeholder in its temporary checkout before
+# `kaggle kernels push`. Kaggle script kernels only guarantee the code_file itself,
+# so runtime configuration must not depend on a sibling file being uploaded.
+EMBEDDED_RUNTIME_CONFIG = None
+
 
 def discover_cache_root() -> pathlib.Path:
     preferred = [
@@ -58,8 +63,8 @@ def stage_persistent_cache() -> None:
             dst.unlink()
         dst.symlink_to(src)
 
-    # Both manifests are writable local files; the multi-GB blobs remain read-only
-    # symlinks to the persistent Kaggle Dataset. No pull and no ollama create.
+    # Manifest files are writable local copies. Multi-GB model blobs stay as
+    # read-only symlinks to the persistent Kaggle Dataset.
     shutil.copy2(manifest_src, BASE_MODEL_DIR / BASE_TAG)
     shutil.copy2(manifest_src, ALIAS_MODEL_DIR / ALIAS_TAG)
     os.environ["OLLAMA_MODELS"] = str(LOCAL_MODELS)
@@ -71,9 +76,11 @@ def stage_persistent_cache() -> None:
 
 def load_bootstrap_config() -> dict:
     path = SCRIPT_DIR / "runtime_config.json"
-    if not path.is_file():
-        raise RuntimeError("RUNTIME_CONFIG_MISSING")
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.is_file():
+        return json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(EMBEDDED_RUNTIME_CONFIG, dict) and int(EMBEDDED_RUNTIME_CONFIG.get("generation", 0)) > 0:
+        return dict(EMBEDDED_RUNTIME_CONFIG)
+    raise RuntimeError("RUNTIME_CONFIG_MISSING")
 
 
 def download_text_file(url: str, target: pathlib.Path) -> None:
@@ -92,7 +99,7 @@ def prepare_runtime_sources() -> None:
     for name in ("worker.py", "proxy_app.py"):
         url = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{source_ref}/kaggle/{name}"
         download_text_file(url, WORK / name)
-    shutil.copy2(SCRIPT_DIR / "runtime_config.json", WORK / "runtime_config.json")
+    (WORK / "runtime_config.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     os.chdir(WORK)
     if str(WORK) not in sys.path:
         sys.path.insert(0, str(WORK))
@@ -222,8 +229,6 @@ def main_with_idle_shutdown() -> None:
         except Exception as exc:
             print(f"CONTROL_POLL_WARNING={type(exc).__name__}", flush=True)
 
-        # Never stop while an authenticated inference request is in flight.
-        # Health probes do not create markers or refresh last activity.
         if now - ready_at >= startup_grace and not has_inflight_requests():
             idle_for = now - read_last_activity(ready_at)
             if idle_for >= idle_timeout:
