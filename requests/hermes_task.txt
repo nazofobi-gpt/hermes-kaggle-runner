@@ -1,1 +1,4 @@
-Terminal aracını gerçekten kullan. `printf 'PUBLIC_TASK_PASS\n'` komutunu terminalde çalıştır. Son cevapta terminal çıktısını aynen yaz; başka hiçbir şey yazma.
+MODE: terminal
+EXPECT: PUBLIC_TASK_PASS
+---
+Terminal aracını gerçekten kullan. Terminalde `printf 'PUBLIC_TASK_PASS\n'` komutunu çalıştır. Son cevapta terminal çıktısını aynen yaz; başka hiçbir şey yazma.
