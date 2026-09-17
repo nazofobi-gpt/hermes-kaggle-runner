@@ -1,0 +1,36 @@
+name: Hermes Agent Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/run_hermes_agent.sh'
+      - '.github/workflows/hermes-agent.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hermes-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KAGGLE_BASE_URL: ${{ secrets.KAGGLE_BASE_URL }}
+      KAGGLE_API_KEY: ${{ secrets.KAGGLE_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KAGGLE_BASE_URL" || { echo 'KAGGLE_BASE_URL missing'; exit 1; }
+          test -n "$KAGGLE_API_KEY" || { echo 'KAGGLE_API_KEY missing'; exit 1; }
+          echo 'Kaggle endpoint secrets are configured.'
+
+      - name: Install configure and test Hermes Agent
+        shell: bash
+        run: |
+          chmod +x scripts/run_hermes_agent.sh
+          scripts/run_hermes_agent.sh
