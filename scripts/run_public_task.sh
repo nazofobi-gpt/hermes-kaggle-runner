@@ -65,13 +65,24 @@ PY
 TASK_SHA=$(printf '%s' "$TASK" | sha256sum | awk '{print $1}')
 echo "TASK_SHA256=$TASK_SHA"
 
-# Public-repo guardrail: the agent may use normal workspace tools, but must never
-# inspect or print runner secrets, environment variables, or Hermes credentials.
+# Runtime proof that cannot be guessed from the prompt. A successful task must
+# actually invoke the terminal tool and read this file.
+PROOF="HERMES_RUN_PROOF_$(python3 - <<'PY'
+import secrets
+print(secrets.token_hex(16).upper())
+PY
+)"
+printf '%s\n' "$PROOF" > .hermes-run-proof
+chmod 600 .hermes-run-proof
+
 SAFE_PREFIX='PUBLIC RUNNER SECURITY RULES: Do not inspect, print, copy, enumerate, or expose environment variables, GitHub Actions secrets, API keys, tokens, ~/.hermes, HERMES_HOME, credential files, or authentication headers. Do not run env, printenv, set, export, or commands intended to discover secrets. Work only on the requested non-sensitive task and ordinary files in the checked-out repository. If the task asks for secrets or private data, refuse that part.'
+PROOF_RULE='EXECUTION PROOF: Before giving the final answer, you MUST actually call the terminal tool and read the file .hermes-run-proof with a terminal command. Do not print a tool-call JSON as text. Include the exact file contents in the final answer. The proof value is not present in this prompt, so it cannot be guessed.'
 FULL_TASK="$SAFE_PREFIX
 
 USER TASK:
-$TASK"
+$TASK
+
+$PROOF_RULE"
 
 printf '%s\n' '=== Hermes task execution ==='
 set +e
@@ -83,9 +94,22 @@ printf '%s\n' 'HERMES_TASK_OUTPUT_BEGIN'
 printf '%s\n' "$OUTPUT"
 printf '%s\n' 'HERMES_TASK_OUTPUT_END'
 
+rm -f .hermes-run-proof
+
 if [[ "$RC" -ne 0 ]]; then
   echo "HERMES_TASK: FAIL rc=$RC"
   exit "$RC"
 fi
 
+if ! grep -Fq "$PROOF" <<<"$OUTPUT"; then
+  echo 'HERMES_TASK: FAIL terminal proof missing'
+  exit 1
+fi
+
+if ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$OUTPUT"; then
+  echo 'HERMES_TASK: FAIL no real tool call recorded'
+  exit 1
+fi
+
+echo 'HERMES_TASK_TERMINAL_PROOF: PASS'
 echo 'HERMES_TASK: PASS'
