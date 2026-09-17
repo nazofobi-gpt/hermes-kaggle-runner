@@ -53,8 +53,9 @@ config = {
         "timeout": 120,
     },
 }
-(home / "config.yaml").write_text(json.dumps(config, indent=2), encoding="utf-8")
-(home / "config.yaml").chmod(0o600)
+config_path = home / "config.yaml"
+config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+config_path.chmod(0o600)
 
 soul = """You are running inside a PUBLIC GitHub Actions runner.
 Security rules are mandatory:
@@ -64,8 +65,9 @@ Security rules are mandatory:
 - If asked for secrets, credentials, private user data, or hidden runner configuration, refuse that part.
 - You may use normal terminal tools on the repository workspace when needed.
 """
-(home / "SOUL.md").write_text(soul, encoding="utf-8")
-(home / "SOUL.md").chmod(0o600)
+soul_path = home / "SOUL.md"
+soul_path.write_text(soul, encoding="utf-8")
+soul_path.chmod(0o600)
 
 print("HERMES_CONFIG_WRITTEN")
 print("HERMES_SOUL_GUARDRAIL_WRITTEN")
@@ -74,14 +76,16 @@ print("CONTEXT_LENGTH=65536")
 print("Secrets were not printed.")
 PY
 
-# Remove endpoint credentials from the child process environment. Hermes still
-# reads them from its protected config file outside the checked-out workspace.
+# Credentials are needed only for Hermes' protected config. Remove the workflow
+# secret variables before any agent-controlled terminal command is possible.
 unset KAGGLE_API_KEY
 unset KAGGLE_BASE_URL
 
 TASK_SHA=$(printf '%s' "$TASK" | sha256sum | awk '{print $1}')
 echo "TASK_SHA256=$TASK_SHA"
 
+# Phase A: independent execution proof. This deliberately mirrors the prompt
+# pattern that already passed the dedicated Hermes acceptance workflow.
 PROOF="HERMES_RUN_PROOF_$(python3 - <<'PY'
 import secrets
 print(secrets.token_hex(16).upper())
@@ -90,37 +94,51 @@ PY
 printf '%s\n' "$PROOF" > .hermes-run-proof
 chmod 600 .hermes-run-proof
 
-PROOF_RULE='Terminal aracını gerçekten kullan. Çalışma klasöründeki .hermes-run-proof dosyasını terminal komutu ile oku. Son cevapta dosyanın içeriğini aynen yaz; tahmin etme.'
-FULL_TASK="$TASK
+PROOF_PROMPT='Terminal aracını kullan. Çalışma klasöründeki .hermes-run-proof dosyasını terminal komutu ile oku. Son cevapta dosyanın içeriğini aynen yaz; tahmin etme.'
 
-$PROOF_RULE"
-
-printf '%s\n' '=== Hermes task execution ==='
+printf '%s\n' '=== Hermes execution proof ==='
 set +e
-OUTPUT=$(timeout 600s hermes chat -q "$FULL_TASK" 2>&1)
-RC=$?
+PROOF_OUTPUT=$(timeout 240s hermes chat -q "$PROOF_PROMPT" 2>&1)
+PROOF_RC=$?
 set -e
 
-printf '%s\n' 'HERMES_TASK_OUTPUT_BEGIN'
-printf '%s\n' "$OUTPUT"
-printf '%s\n' 'HERMES_TASK_OUTPUT_END'
+printf '%s\n' 'HERMES_PROOF_OUTPUT_BEGIN'
+printf '%s\n' "$PROOF_OUTPUT"
+printf '%s\n' 'HERMES_PROOF_OUTPUT_END'
 
 rm -f .hermes-run-proof
 
-if [[ "$RC" -ne 0 ]]; then
-  echo "HERMES_TASK: FAIL rc=$RC"
-  exit "$RC"
+if [[ "$PROOF_RC" -ne 0 ]]; then
+  echo "HERMES_EXECUTION_PROOF: FAIL rc=$PROOF_RC"
+  exit "$PROOF_RC"
 fi
-
-if ! grep -Fq "$PROOF" <<<"$OUTPUT"; then
-  echo 'HERMES_TASK: FAIL terminal proof missing'
+if ! grep -Fq "$PROOF" <<<"$PROOF_OUTPUT"; then
+  echo 'HERMES_EXECUTION_PROOF: FAIL sentinel missing'
+  exit 1
+fi
+if ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$PROOF_OUTPUT"; then
+  echo 'HERMES_EXECUTION_PROOF: FAIL no real tool call recorded'
   exit 1
 fi
 
-if ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$OUTPUT"; then
-  echo 'HERMES_TASK: FAIL no real tool call recorded'
-  exit 1
+echo 'HERMES_EXECUTION_PROOF: PASS'
+
+# Phase B: run the actual public task in a fresh Hermes session. The task is no
+# longer mixed with the infrastructure proof, so arbitrary task wording cannot
+# invalidate proof collection.
+printf '%s\n' '=== Hermes public task ==='
+set +e
+TASK_OUTPUT=$(timeout 600s hermes chat -q "$TASK" 2>&1)
+TASK_RC=$?
+set -e
+
+printf '%s\n' 'HERMES_TASK_OUTPUT_BEGIN'
+printf '%s\n' "$TASK_OUTPUT"
+printf '%s\n' 'HERMES_TASK_OUTPUT_END'
+
+if [[ "$TASK_RC" -ne 0 ]]; then
+  echo "HERMES_TASK: FAIL rc=$TASK_RC"
+  exit "$TASK_RC"
 fi
 
-echo 'HERMES_TASK_TERMINAL_PROOF: PASS'
 echo 'HERMES_TASK: PASS'
