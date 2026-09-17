@@ -1,0 +1,160 @@
+name: Encrypted GPU Task
+
+on:
+  push:
+    paths:
+      - 'requests/gpu_tasks/*.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encrypted-gpu-task
+  cancel-in-progress: false
+
+jobs:
+  gpu-task:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USER: nazofobigpt
+      KERNEL_ID: nazofobigpt/hermes-gpu-task
+      MODEL_CACHE_DATASET: nazofobigpt/hermes-ollama-cache
+      TRANSPORT_KEY_DATASET: nazofobigpt/hermes-gpu-transport-key
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Locate encrypted task
+        id: task
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          request_file=$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" -- 'requests/gpu_tasks/*.json' | tail -n 1)
+          test -n "$request_file" || { echo 'GPU_TASK_REQUEST_FILE_MISSING'; exit 2; }
+          test -f "$request_file" || { echo 'GPU_TASK_REQUEST_FILE_NOT_FOUND'; exit 2; }
+
+          task_id=$(jq -r '.task_id // empty' "$request_file")
+          wrapped=$(jq -r '.wrapped_key_b64 // empty' "$request_file")
+          prompt_box=$(jq -r '.prompt_box_b64 // empty' "$request_file")
+          [[ "$task_id" =~ ^[A-Za-z0-9._-]{8,96}$ ]] || { echo 'GPU_TASK_ID_INVALID'; exit 2; }
+          test -n "$wrapped" || { echo 'GPU_TASK_WRAPPED_KEY_MISSING'; exit 2; }
+          test -n "$prompt_box" || { echo 'GPU_TASK_PROMPT_BOX_MISSING'; exit 2; }
+          test "${#wrapped}" -lt 10000 || { echo 'GPU_TASK_WRAPPED_KEY_TOO_LARGE'; exit 2; }
+          test "${#prompt_box}" -lt 1500000 || { echo 'GPU_TASK_PROMPT_BOX_TOO_LARGE'; exit 2; }
+
+          echo "request_file=$request_file" >> "$GITHUB_OUTPUT"
+          echo "task_id=$task_id" >> "$GITHUB_OUTPUT"
+          echo "GPU_TASK_REQUEST_VALIDATE=PASS"
+
+      - name: Verify Kaggle credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_API_TOKEN:-}" || { echo 'KAGGLE_API_TOKEN missing'; exit 3; }
+
+      - name: Install Kaggle CLI
+        run: python3 -m pip install -q --upgrade kaggle
+
+      - name: Dataset preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle datasets status "$MODEL_CACHE_DATASET"
+          kaggle datasets status "$TRANSPORT_KEY_DATASET"
+          echo 'GPU_TASK_DATASETS=PASS'
+
+      - name: Prepare private one-shot kernel
+        shell: bash
+        env:
+          REQUEST_FILE: ${{ steps.task.outputs.request_file }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+
+          root = pathlib.Path("kaggle")
+          req = json.loads(pathlib.Path(os.environ["REQUEST_FILE"]).read_text(encoding="utf-8"))
+          entry = root / "gpu_task_worker.py"
+          text = entry.read_text(encoding="utf-8")
+          marker = "EMBEDDED_GPU_REQUEST = None"
+          if text.count(marker) != 1:
+              raise SystemExit("GPU task request placeholder missing or duplicated")
+          entry.write_text(text.replace(marker, "EMBEDDED_GPU_REQUEST = " + repr(req)), encoding="utf-8")
+
+          metadata = {
+              "id": os.environ["KERNEL_ID"],
+              "title": "Hermes Encrypted GPU Task",
+              "code_file": "gpu_task_worker.py",
+              "language": "python",
+              "kernel_type": "script",
+              "is_private": True,
+              "enable_gpu": True,
+              "enable_internet": True,
+              "machine_shape": "NvidiaTeslaT4",
+              "dataset_sources": [
+                  os.environ["MODEL_CACHE_DATASET"],
+                  os.environ["TRANSPORT_KEY_DATASET"],
+              ],
+              "competition_sources": [],
+              "kernel_sources": [],
+              "model_sources": [],
+          }
+          (root / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+          PY
+          echo 'GPU_TASK_KERNEL_PREP=PASS'
+
+      - name: Start private GPU task
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle kernels push -p kaggle --accelerator NvidiaTeslaT4
+          echo 'GPU_TASK_KERNEL_PUSH=PASS'
+
+      - name: Wait for encrypted result
+        shell: bash
+        env:
+          EXPECTED_TASK_ID: ${{ steps.task.outputs.task_id }}
+        run: |
+          set -euo pipefail
+          log_file="$RUNNER_TEMP/gpu-task.log"
+          : > "$log_file"
+          timeout 900s kaggle kernels logs "$KERNEL_ID" --follow >"$log_file" 2>&1 &
+          log_pid=$!
+
+          passed=0
+          for _ in $(seq 1 180); do
+            if grep -q 'GPU_TASK_PASS=1' "$log_file"; then
+              passed=1
+              break
+            fi
+            status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
+            if grep -Eq 'ERROR|COMPLETE|CANCEL' <<<"$status"; then
+              break
+            fi
+            sleep 5
+          done
+
+          kill "$log_pid" 2>/dev/null || true
+          wait "$log_pid" 2>/dev/null || true
+
+          if [[ "$passed" != "1" ]]; then
+            echo 'GPU_TASK_WORKFLOW=FAIL'
+            grep -E 'GPU_TASK_(ID|DECRYPT|MODEL_CACHE|ZSTD|OLLAMA_INSTALL|FATAL|PASS)' "$log_file" | tail -n 80 || true
+            exit 4
+          fi
+
+          observed_id=$(grep -oE 'GPU_TASK_ID=[A-Za-z0-9._-]+' "$log_file" | tail -1 | cut -d= -f2-)
+          [[ "$observed_id" == "$EXPECTED_TASK_ID" ]] || { echo 'GPU_TASK_ID_MISMATCH'; exit 5; }
+
+          result_line=$(grep -oE 'GPU_TASK_RESULT_B64=[A-Za-z0-9+/=]+' "$log_file" | tail -1)
+          test -n "$result_line" || { echo 'GPU_TASK_RESULT_MISSING'; exit 6; }
+
+          echo "GPU_TASK_ID=$observed_id"
+          echo "$result_line"
+          echo 'GPU_TASK_WORKFLOW_PASS=1'
