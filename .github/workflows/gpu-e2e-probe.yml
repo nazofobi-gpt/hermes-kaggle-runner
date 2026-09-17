@@ -14,7 +14,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wait-ready:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Allow worker bootstrap and secret sync
+        run: |
+          echo 'GPU_PROBE_WARMUP_WAIT=120s'
+          sleep 120
+
   probe:
+    needs: wait-ready
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
