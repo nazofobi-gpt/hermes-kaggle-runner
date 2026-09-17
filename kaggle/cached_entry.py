@@ -5,11 +5,19 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 
 INPUT_ROOT = pathlib.Path("/kaggle/input")
-LOCAL_MODELS = pathlib.Path("/kaggle/working/ollama-models")
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+WORK = pathlib.Path("/kaggle/working")
+LOCAL_MODELS = WORK / "ollama-models"
 BASE_MODEL_DIR = LOCAL_MODELS / "manifests" / "registry.ollama.ai" / "library" / "llama3.1"
+ALIAS_MODEL_DIR = LOCAL_MODELS / "manifests" / "registry.ollama.ai" / "library" / "llama3.1-hermes"
 BASE_TAG = "8b-instruct-q4_K_M"
+ALIAS_TAG = "latest"
+GITHUB_OWNER = "nazofobi-gpt"
+GITHUB_REPO = "hermes-kaggle-runner"
+CONTEXT_LENGTH = 65536
 
 
 def discover_cache_root() -> pathlib.Path:
@@ -42,6 +50,7 @@ def stage_persistent_cache() -> None:
     blobs_dir = LOCAL_MODELS / "blobs"
     blobs_dir.mkdir(parents=True, exist_ok=True)
     BASE_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    ALIAS_MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     for src in blob_sources:
         dst = blobs_dir / src.name
@@ -49,13 +58,50 @@ def stage_persistent_cache() -> None:
             dst.unlink()
         dst.symlink_to(src)
 
+    # Both manifests are writable local files; the multi-GB blobs remain read-only
+    # symlinks to the persistent Kaggle Dataset. No pull and no ollama create.
     shutil.copy2(manifest_src, BASE_MODEL_DIR / BASE_TAG)
+    shutil.copy2(manifest_src, ALIAS_MODEL_DIR / ALIAS_TAG)
     os.environ["OLLAMA_MODELS"] = str(LOCAL_MODELS)
+    os.environ["OLLAMA_CONTEXT_LENGTH"] = str(CONTEXT_LENGTH)
     print(f"MODEL_CACHE_ROOT={cache_root}", flush=True)
     print(f"MODEL_CACHE_STAGE: PASS blobs={len(blob_sources)}", flush=True)
+    print("MODEL_CACHE_NO_PULL_NO_CREATE: PASS", flush=True)
+
+
+def load_bootstrap_config() -> dict:
+    path = SCRIPT_DIR / "runtime_config.json"
+    if not path.is_file():
+        raise RuntimeError("RUNTIME_CONFIG_MISSING")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def download_text_file(url: str, target: pathlib.Path) -> None:
+    req = urllib.request.Request(url, headers={"User-Agent": "hermes-kaggle-worker/1"})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        data = response.read()
+    if not data:
+        raise RuntimeError(f"RUNTIME_SOURCE_EMPTY:{target.name}")
+    target.write_bytes(data)
+
+
+def prepare_runtime_sources() -> None:
+    cfg = load_bootstrap_config()
+    source_ref = str(cfg.get("source_ref") or "main")
+    WORK.mkdir(parents=True, exist_ok=True)
+    for name in ("worker.py", "proxy_app.py"):
+        url = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{source_ref}/kaggle/{name}"
+        download_text_file(url, WORK / name)
+    shutil.copy2(SCRIPT_DIR / "runtime_config.json", WORK / "runtime_config.json")
+    os.chdir(WORK)
+    if str(WORK) not in sys.path:
+        sys.path.insert(0, str(WORK))
+    print(f"RUNTIME_SOURCE_REF={source_ref}", flush=True)
+    print("RUNTIME_SOURCE_STAGE: PASS", flush=True)
 
 
 stage_persistent_cache()
+prepare_runtime_sources()
 
 import worker  # noqa: E402
 
@@ -65,15 +111,10 @@ INFLIGHT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def ensure_model_from_cache() -> None:
-    # Strict cache-only path: do not run `ollama pull` here.
+    # Strict cache-only path: never download model weights and never mutate the
+    # read-only persistent dataset blobs.
     subprocess.run(["ollama", "show", worker.BASE_MODEL], check=True)
-
-    modelfile = worker.WORK / "Modelfile.hermes64k"
-    modelfile.write_text(
-        f"FROM {worker.BASE_MODEL}\nPARAMETER num_ctx 65536\n",
-        encoding="utf-8",
-    )
-    subprocess.run(["ollama", "create", worker.MODEL, "-f", str(modelfile)], check=True)
+    subprocess.run(["ollama", "show", worker.MODEL], check=True)
 
     response = worker.requests.post(
         f"{worker.OLLAMA_URL}/api/chat",
@@ -81,11 +122,16 @@ def ensure_model_from_cache() -> None:
             "model": worker.MODEL,
             "messages": [{"role": "user", "content": "Reply exactly WORKER_READY"}],
             "stream": False,
+            "options": {"num_ctx": CONTEXT_LENGTH, "temperature": 0},
         },
         timeout=300,
     )
     response.raise_for_status()
+    text = ((response.json().get("message") or {}).get("content") or "").strip()
+    if "WORKER_READY" not in text:
+        raise RuntimeError("MODEL_WARMUP_TOKEN_MISMATCH")
     print("MODEL_CACHE_HIT: PASS", flush=True)
+    print(f"MODEL_CONTEXT={CONTEXT_LENGTH}", flush=True)
     print("LOCAL_MODEL_READY", flush=True)
 
 
@@ -102,6 +148,8 @@ def start_proxy_with_activity(api_key: str):
     clear_stale_inflight()
     env = os.environ.copy()
     env["PROXY_API_KEY"] = api_key
+    old_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(WORK) + ((":" + old_pythonpath) if old_pythonpath else "")
     log = open(worker.WORK / "proxy.log", "a", buffering=1)
     proc = worker.start_process(
         [sys.executable, "-m", "uvicorn", "proxy_app:app", "--host", "127.0.0.1", "--port", str(worker.PROXY_PORT)],
