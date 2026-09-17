@@ -10,10 +10,37 @@ if [[ ! -f "$TASK_FILE" ]]; then
   exit 2
 fi
 
-TASK=$(cat "$TASK_FILE")
-if [[ -z "${TASK//[[:space:]]/}" ]]; then
+RAW_TASK=$(cat "$TASK_FILE")
+if [[ -z "${RAW_TASK//[[:space:]]/}" ]]; then
   echo "TASK_EMPTY" >&2
   exit 2
+fi
+
+MODE="auto"
+EXPECT=""
+TASK="$RAW_TASK"
+if grep -q '^---$' "$TASK_FILE"; then
+  MODE=$(sed -n 's/^MODE:[[:space:]]*//p' "$TASK_FILE" | head -n1)
+  EXPECT=$(sed -n 's/^EXPECT:[[:space:]]*//p' "$TASK_FILE" | head -n1)
+  TASK=$(sed '1,/^---$/d' "$TASK_FILE")
+  MODE="${MODE:-auto}"
+fi
+
+case "$MODE" in
+  auto|chat|terminal) ;;
+  *) echo "TASK_MODE_INVALID: $MODE" >&2; exit 2 ;;
+esac
+
+if [[ -z "${TASK//[[:space:]]/}" ]]; then
+  echo "TASK_BODY_EMPTY" >&2
+  exit 2
+fi
+
+echo "TASK_MODE=$MODE"
+if [[ -n "$EXPECT" ]]; then
+  echo "TASK_EXPECTATION_CONFIGURED=yes"
+else
+  echo "TASK_EXPECTATION_CONFIGURED=no"
 fi
 
 export PATH="$HOME/.local/bin:$PATH"
@@ -76,16 +103,16 @@ print("CONTEXT_LENGTH=65536")
 print("Secrets were not printed.")
 PY
 
-# Credentials are needed only for Hermes' protected config. Remove the workflow
-# secret variables before any agent-controlled terminal command is possible.
+# Credentials are needed only to create Hermes' protected configuration.
+# Remove them from the agent-controlled child process environment.
 unset KAGGLE_API_KEY
 unset KAGGLE_BASE_URL
 
 TASK_SHA=$(printf '%s' "$TASK" | sha256sum | awk '{print $1}')
 echo "TASK_SHA256=$TASK_SHA"
 
-# Phase A: independent execution proof. This deliberately mirrors the prompt
-# pattern that already passed the dedicated Hermes acceptance workflow.
+# Phase A: independent proof that this runner/model combination can execute a
+# real Hermes terminal tool call. The random value is unknown to the model.
 PROOF="HERMES_RUN_PROOF_$(python3 - <<'PY'
 import secrets
 print(secrets.token_hex(16).upper())
@@ -93,7 +120,6 @@ PY
 )"
 printf '%s\n' "$PROOF" > .hermes-run-proof
 chmod 600 .hermes-run-proof
-
 PROOF_PROMPT='Terminal aracını kullan. Çalışma klasöründeki .hermes-run-proof dosyasını terminal komutu ile oku. Son cevapta dosyanın içeriğini aynen yaz; tahmin etme.'
 
 printf '%s\n' '=== Hermes execution proof ==='
@@ -101,11 +127,9 @@ set +e
 PROOF_OUTPUT=$(timeout 240s hermes chat -q "$PROOF_PROMPT" 2>&1)
 PROOF_RC=$?
 set -e
-
 printf '%s\n' 'HERMES_PROOF_OUTPUT_BEGIN'
 printf '%s\n' "$PROOF_OUTPUT"
 printf '%s\n' 'HERMES_PROOF_OUTPUT_END'
-
 rm -f .hermes-run-proof
 
 if [[ "$PROOF_RC" -ne 0 ]]; then
@@ -120,17 +144,34 @@ if ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$PROOF_OUTPUT"; then
   echo 'HERMES_EXECUTION_PROOF: FAIL no real tool call recorded'
   exit 1
 fi
-
 echo 'HERMES_EXECUTION_PROOF: PASS'
 
-# Phase B: run the actual public task in a fresh Hermes session. The task is no
-# longer mixed with the infrastructure proof, so arbitrary task wording cannot
-# invalidate proof collection.
+run_task() {
+  local prompt="$1"
+  set +e
+  TASK_OUTPUT=$(timeout 600s hermes chat -q "$prompt" 2>&1)
+  TASK_RC=$?
+  set -e
+}
+
 printf '%s\n' '=== Hermes public task ==='
-set +e
-TASK_OUTPUT=$(timeout 600s hermes chat -q "$TASK" 2>&1)
-TASK_RC=$?
-set -e
+run_task "$TASK"
+
+needs_retry=0
+if [[ "$MODE" == "terminal" ]] && ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$TASK_OUTPUT"; then
+  needs_retry=1
+fi
+if grep -Eq '\{"name"[[:space:]]*:[[:space:]]*"terminal"' <<<"$TASK_OUTPUT" && ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$TASK_OUTPUT"; then
+  needs_retry=1
+fi
+
+if [[ "$TASK_RC" -eq 0 && "$needs_retry" -eq 1 ]]; then
+  echo 'HERMES_TASK_RETRY: terminal tool-call text detected or real terminal call missing'
+  RECOVERY_PREFIX='Bu görev gerçek Hermes terminal aracını kullanmanı gerektiriyor. Terminal çağrısını JSON, kod veya açıklama olarak yazma. terminal toolunu gerçekten çağır, araç sonucunu gözlemle ve ancak sonra son cevabı ver.'
+  run_task "$RECOVERY_PREFIX
+
+$TASK"
+fi
 
 printf '%s\n' 'HERMES_TASK_OUTPUT_BEGIN'
 printf '%s\n' "$TASK_OUTPUT"
@@ -141,4 +182,15 @@ if [[ "$TASK_RC" -ne 0 ]]; then
   exit "$TASK_RC"
 fi
 
+if [[ "$MODE" == "terminal" ]] && ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$TASK_OUTPUT"; then
+  echo 'HERMES_TASK: FAIL terminal mode required a real tool call'
+  exit 1
+fi
+
+if [[ -n "$EXPECT" ]] && ! grep -Fxq "$EXPECT" <<<"$TASK_OUTPUT"; then
+  echo 'HERMES_TASK: FAIL expected exact output line missing'
+  exit 1
+fi
+
+echo 'HERMES_TASK_VALIDATION: PASS'
 echo 'HERMES_TASK: PASS'
