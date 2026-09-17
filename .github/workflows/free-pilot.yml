@@ -1,0 +1,37 @@
+name: Free Execution Pilot
+
+on:
+  push:
+    paths:
+      - 'free_pilot/**'
+      - '.github/workflows/free-pilot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deterministic cleanup
+        run: python3 free_pilot/run.py
+      - name: Verify receipt
+        run: |
+          python3 - <<'PY'
+          import json
+          r=json.load(open('free_pilot/out/receipt.json'))
+          assert r['source_rows']==4
+          assert r['clean_rows']==3
+          assert r['duplicates_removed']==1
+          assert r['review_rows']==1
+          print('receipt-pass', r['sha256'])
+          PY
+      - name: Upload pilot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: free-pilot-output
+          path: free_pilot/out/
+          retention-days: 1
