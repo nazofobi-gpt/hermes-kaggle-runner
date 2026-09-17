@@ -1,5 +1,5 @@
 {
-  "desired": "STOP",
-  "generation": 3,
-  "reason": "idle-after-cache-validation"
+  "desired": "RUN",
+  "generation": 4,
+  "reason": "automation-e2e-acceptance"
 }
