@@ -1,0 +1,48 @@
+name: Kaggle Worker Status Probe
+
+on:
+  push:
+    paths:
+      - 'control/kaggle_status_probe.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KERNEL_ID: nazofobigpt/hermes-gpu-worker
+    steps:
+      - name: Check worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_API_TOKEN:-}" || { echo 'KAGGLE_API_TOKEN missing'; exit 2; }
+          python3 -m pip install -q --upgrade kaggle
+          status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
+          echo "$status"
+          if grep -q 'RUNNING' <<<"$status"; then
+            echo 'KAGGLE_WORKER_STATUS=RUNNING'
+            exit 0
+          fi
+          if grep -q 'QUEUED' <<<"$status"; then
+            echo 'KAGGLE_WORKER_STATUS=QUEUED'
+            exit 0
+          fi
+          if grep -Eq 'ERROR|COMPLETE|CANCEL' <<<"$status"; then
+            echo 'KAGGLE_WORKER_STATUS=TERMINAL'
+            mkdir -p "$RUNNER_TEMP/kernel-output"
+            kaggle kernels output "$KERNEL_ID" -p "$RUNNER_TEMP/kernel-output" -q || true
+            find "$RUNNER_TEMP/kernel-output" -maxdepth 3 -type f -print
+            for f in "$RUNNER_TEMP"/kernel-output/*.log "$RUNNER_TEMP"/kernel-output/**/*.log; do
+              [[ -f "$f" ]] || continue
+              tail -n 120 "$f" || true
+            done
+            exit 3
+          fi
+          echo 'KAGGLE_WORKER_STATUS=UNKNOWN'
+          exit 4
