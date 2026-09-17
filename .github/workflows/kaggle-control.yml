@@ -75,6 +75,7 @@ jobs:
           root = pathlib.Path('kaggle')
           (root / 'runtime_config.json').write_text(json.dumps({
               'generation': int(os.environ['GENERATION']),
+              'source_ref': os.environ['GITHUB_SHA'],
               'max_runtime_seconds': 21600,
               'startup_grace_seconds': 480,
               'idle_timeout_seconds': 300,
