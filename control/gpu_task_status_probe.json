@@ -1,1 +1,4 @@
-{"probe":1,"task_id":"gpu-acceptance-enc-001"}
+{
+  "probe": 2,
+  "task_id": "gpu-acceptance-enc-001"
+}
