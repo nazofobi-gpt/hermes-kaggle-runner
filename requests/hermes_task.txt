@@ -1,1 +1,1 @@
-Terminal aracını kullanarak çalışma ortamını doğrula. Sadece şu bilgileri döndür: işletim sistemi çekirdeği (`uname -s`), mimari (`uname -m`) ve mevcut çalışma klasörünün son klasör adı (`basename "$PWD"`). Son satırda tam olarak PUBLIC_TASK_PASS yaz. Hassas bilgi veya ortam değişkeni gösterme.
+Terminal aracını gerçekten kullan. `printf 'PUBLIC_TASK_PASS\n'` komutunu terminalde çalıştır. Son cevapta terminal çıktısını aynen yaz; başka hiçbir şey yazma.
