@@ -1,5 +1,5 @@
 {
   "generation": 6,
-  "probe": 2,
-  "reason": "automation-e2e-acceptance"
+  "probe": 3,
+  "reason": "automation-e2e-delayed-probe"
 }
