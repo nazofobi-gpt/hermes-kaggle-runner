@@ -1,7 +1,7 @@
 {
-  "generation": 3,
+  "generation": 4,
   "model": "qwen2.5-coder:14b-instruct-q4_K_M",
   "context": 16384,
   "tool_trials": 5,
-  "reason": "retry-cache-only-direct-base-model"
+  "reason": "final-cache-only-tool-call-acceptance"
 }
