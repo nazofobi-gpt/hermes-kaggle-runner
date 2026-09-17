@@ -1,5 +1,5 @@
 {
-  "desired": "RUN",
+  "desired": "STOP",
   "generation": 8,
-  "reason": "automation-e2e-after-zstd-bootstrap"
+  "reason": "generation-8-automation-acceptance-pass"
 }
