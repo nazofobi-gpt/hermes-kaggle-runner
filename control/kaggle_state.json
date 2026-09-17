@@ -1,5 +1,5 @@
 {
-  "desired": "RUN",
+  "desired": "STOP",
   "generation": 3,
-  "reason": "validate-persistent-model-cache"
+  "reason": "idle-after-cache-validation"
 }
