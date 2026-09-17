@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -119,6 +120,12 @@ def wait_http(url: str, *, timeout=90, headers=None) -> bool:
 
 def install_runtime():
     print("RUNTIME_INSTALL_BEGIN", flush=True)
+    if shutil.which("zstd") is None:
+        subprocess.run(
+            ["bash", "-lc", "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd"],
+            check=True,
+        )
+        print("RUNTIME_ZSTD_BOOTSTRAP=PASS", flush=True)
     subprocess.run(["bash", "-lc", "curl -fsSL https://ollama.com/install.sh | sh"], check=True)
     cloudflared = WORK / "cloudflared"
     if not cloudflared.exists():
