@@ -111,20 +111,21 @@ PY
 unset KAGGLE_API_KEY
 unset KAGGLE_BASE_URL
 
-# Optional dynamic task fixture: this value is created only at runtime and is
-# absent from the task prompt. It proves that a task result came from an actual
-# tool observation rather than memorization or prompt imitation.
+# Optional runtime-only fixture used by the acceptance task. The random value is
+# never included in the prompt. Acceptance is based on a filesystem side effect,
+# not on trusting the model's final prose.
 if [[ "$DYNAMIC_FIXTURE" == "yes" ]]; then
-  EXPECT="HERMES_TASK_FIXTURE_$(python3 - <<'PY'
+  DYNAMIC_VALUE="HERMES_TASK_FIXTURE_$(python3 - <<'PY'
 import secrets
 print(secrets.token_hex(16).upper())
 PY
 )"
-  printf '%s\n' "$EXPECT" > .hermes-task-fixture
+  printf '%s\n' "$DYNAMIC_VALUE" > .hermes-task-fixture
   chmod 600 .hermes-task-fixture
-  echo 'TASK_EXPECTATION_CONFIGURED=dynamic'
+  rm -f .hermes-task-observed
+  echo 'TASK_EXPECTATION_CONFIGURED=dynamic-side-effect'
 elif [[ -n "$EXPECT" ]]; then
-  echo 'TASK_EXPECTATION_CONFIGURED=static'
+  echo 'TASK_EXPECTATION_CONFIGURED=static-final-output'
 else
   echo 'TASK_EXPECTATION_CONFIGURED=no'
 fi
@@ -132,89 +133,124 @@ fi
 TASK_SHA=$(printf '%s' "$TASK" | sha256sum | awk '{print $1}')
 echo "TASK_SHA256=$TASK_SHA"
 
-# Phase A: independent proof that this runner/model combination can execute a
-# real Hermes terminal tool call. The random value is unknown to the model.
+run_hermes() {
+  local prompt="$1"
+  set +e
+  HERMES_OUTPUT=$(timeout 600s hermes chat -q "$prompt" 2>&1)
+  HERMES_RC=$?
+  set -e
+}
+
+has_real_tool_call() {
+  grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$1"
+}
+
+# Phase A: prove real terminal execution with a side effect. The model does not
+# need to repeat or interpret the random value correctly; the shell validates
+# the file produced by the command that Hermes actually executed.
 PROOF="HERMES_RUN_PROOF_$(python3 - <<'PY'
 import secrets
 print(secrets.token_hex(16).upper())
 PY
 )"
-printf '%s\n' "$PROOF" > .hermes-run-proof
-chmod 600 .hermes-run-proof
-PROOF_PROMPT='Terminal aracını kullan. Çalışma klasöründeki .hermes-run-proof dosyasını terminal komutu ile oku. Son cevapta dosyanın içeriğini aynen yaz; tahmin etme.'
+printf '%s\n' "$PROOF" > .hermes-proof-token
+chmod 600 .hermes-proof-token
+cat > .hermes-proof-command.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat .hermes-proof-token > .hermes-proof-result
+EOF
+chmod 700 .hermes-proof-command.sh
+rm -f .hermes-proof-result
+
+PROOF_PROMPT='Terminal aracını gerçekten kullan ve çalışma klasöründe ./.hermes-proof-command.sh komutunu çalıştır. Komutu açıklama veya JSON olarak yazmak yeterli değil; terminal toolunu çağır. Son cevap kısa olsun.'
 
 printf '%s\n' '=== Hermes execution proof ==='
-set +e
-PROOF_OUTPUT=$(timeout 240s hermes chat -q "$PROOF_PROMPT" 2>&1)
-PROOF_RC=$?
-set -e
+run_hermes "$PROOF_PROMPT"
+PROOF_OUTPUT="$HERMES_OUTPUT"
+PROOF_RC="$HERMES_RC"
+
+if [[ "$PROOF_RC" -eq 0 ]] && { [[ ! -f .hermes-proof-result ]] || ! cmp -s .hermes-proof-token .hermes-proof-result || ! has_real_tool_call "$PROOF_OUTPUT"; }; then
+  echo 'HERMES_EXECUTION_PROOF_RETRY: required side effect or real tool call missing'
+  RECOVERY='Terminal toolunu şimdi gerçekten çağır ve sadece ./.hermes-proof-command.sh komutunu çalıştır. Komut tamamlanınca kısa bir cevap ver.'
+  run_hermes "$RECOVERY"
+  PROOF_OUTPUT="$HERMES_OUTPUT"
+  PROOF_RC="$HERMES_RC"
+fi
+
 printf '%s\n' 'HERMES_PROOF_OUTPUT_BEGIN'
 printf '%s\n' "$PROOF_OUTPUT"
 printf '%s\n' 'HERMES_PROOF_OUTPUT_END'
-rm -f .hermes-run-proof
 
 if [[ "$PROOF_RC" -ne 0 ]]; then
   echo "HERMES_EXECUTION_PROOF: FAIL rc=$PROOF_RC"
+  rm -f .hermes-proof-token .hermes-proof-result .hermes-proof-command.sh
   exit "$PROOF_RC"
 fi
-if ! grep -Fq "$PROOF" <<<"$PROOF_OUTPUT"; then
-  echo 'HERMES_EXECUTION_PROOF: FAIL sentinel missing'
+if [[ ! -f .hermes-proof-result ]] || ! cmp -s .hermes-proof-token .hermes-proof-result; then
+  echo 'HERMES_EXECUTION_PROOF: FAIL side-effect mismatch'
+  rm -f .hermes-proof-token .hermes-proof-result .hermes-proof-command.sh
   exit 1
 fi
-if ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$PROOF_OUTPUT"; then
+if ! has_real_tool_call "$PROOF_OUTPUT"; then
   echo 'HERMES_EXECUTION_PROOF: FAIL no real tool call recorded'
+  rm -f .hermes-proof-token .hermes-proof-result .hermes-proof-command.sh
   exit 1
 fi
+rm -f .hermes-proof-token .hermes-proof-result .hermes-proof-command.sh
 echo 'HERMES_EXECUTION_PROOF: PASS'
 
-run_task() {
-  local prompt="$1"
-  set +e
-  TASK_OUTPUT=$(timeout 600s hermes chat -q "$prompt" 2>&1)
-  TASK_RC=$?
-  set -e
-}
-
+# Phase B: run the actual public task in a fresh Hermes invocation.
 printf '%s\n' '=== Hermes public task ==='
-run_task "$TASK"
+run_hermes "$TASK"
+TASK_OUTPUT="$HERMES_OUTPUT"
+TASK_RC="$HERMES_RC"
 
 needs_retry=0
-if [[ "$MODE" == "terminal" ]] && ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$TASK_OUTPUT"; then
+if [[ "$MODE" == "terminal" ]] && ! has_real_tool_call "$TASK_OUTPUT"; then
   needs_retry=1
 fi
-if grep -Eq '\{"name"[[:space:]]*:[[:space:]]*"terminal"' <<<"$TASK_OUTPUT" && ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$TASK_OUTPUT"; then
+if grep -Eq '\{"name"[[:space:]]*:[[:space:]]*"terminal"' <<<"$TASK_OUTPUT" && ! has_real_tool_call "$TASK_OUTPUT"; then
   needs_retry=1
 fi
 
 if [[ "$TASK_RC" -eq 0 && "$needs_retry" -eq 1 ]]; then
-  echo 'HERMES_TASK_RETRY: terminal tool-call text detected or real terminal call missing'
-  RECOVERY_PREFIX='Bu görev gerçek Hermes terminal aracını kullanmanı gerektiriyor. Terminal çağrısını JSON, kod veya açıklama olarak yazma. terminal toolunu gerçekten çağır, araç sonucunu gözlemle ve ancak sonra son cevabı ver.'
-  run_task "$RECOVERY_PREFIX
+  echo 'HERMES_TASK_RETRY: real terminal call missing'
+  RECOVERY_PREFIX='Bu görev gerçek Hermes terminal aracını kullanmanı gerektiriyor. Terminal çağrısını JSON, kod veya açıklama olarak yazma; terminal toolunu gerçekten çağır ve sonucu gözlemle.'
+  run_hermes "$RECOVERY_PREFIX
 
 $TASK"
+  TASK_OUTPUT="$HERMES_OUTPUT"
+  TASK_RC="$HERMES_RC"
 fi
 
 printf '%s\n' 'HERMES_TASK_OUTPUT_BEGIN'
 printf '%s\n' "$TASK_OUTPUT"
 printf '%s\n' 'HERMES_TASK_OUTPUT_END'
 
-# Remove runtime-only fixture after the task has had a chance to read it.
-rm -f .hermes-task-fixture
-
 if [[ "$TASK_RC" -ne 0 ]]; then
   echo "HERMES_TASK: FAIL rc=$TASK_RC"
+  rm -f .hermes-task-fixture .hermes-task-observed
   exit "$TASK_RC"
 fi
-
-if [[ "$MODE" == "terminal" ]] && ! grep -Eq 'Messages:.*[1-9][0-9]* tool calls' <<<"$TASK_OUTPUT"; then
+if [[ "$MODE" == "terminal" ]] && ! has_real_tool_call "$TASK_OUTPUT"; then
   echo 'HERMES_TASK: FAIL terminal mode required a real tool call'
+  rm -f .hermes-task-fixture .hermes-task-observed
   exit 1
 fi
 
-if [[ -n "$EXPECT" ]] && ! grep -Fxq "$EXPECT" <<<"$TASK_OUTPUT"; then
+if [[ "$DYNAMIC_FIXTURE" == "yes" ]]; then
+  if [[ ! -f .hermes-task-observed ]] || ! cmp -s .hermes-task-fixture .hermes-task-observed; then
+    echo 'HERMES_TASK: FAIL dynamic side-effect mismatch'
+    rm -f .hermes-task-fixture .hermes-task-observed
+    exit 1
+  fi
+  echo 'HERMES_TASK_DYNAMIC_SIDE_EFFECT: PASS'
+elif [[ -n "$EXPECT" ]] && ! grep -Fxq "$EXPECT" <<<"$TASK_OUTPUT"; then
   echo 'HERMES_TASK: FAIL expected exact output line missing'
   exit 1
 fi
 
+rm -f .hermes-task-fixture .hermes-task-observed
 echo 'HERMES_TASK_VALIDATION: PASS'
 echo 'HERMES_TASK: PASS'

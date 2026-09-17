@@ -1,4 +1,4 @@
 MODE: terminal
 DYNAMIC_FIXTURE: yes
 ---
-Terminal aracını kullan. Çalışma klasöründeki .hermes-task-fixture dosyasını terminal komutu ile oku. Son cevapta dosyanın içeriğini aynen yaz; tahmin etme.
+Terminal aracını gerçekten kullan. Çalışma klasöründe `cp .hermes-task-fixture .hermes-task-observed` komutunu çalıştır. Ardından `cat .hermes-task-observed` ile dosyayı oku. Komutları açıklama veya JSON olarak yazmak yeterli değil; terminal toolunu gerçekten çağır. Son cevap kısa olsun.
