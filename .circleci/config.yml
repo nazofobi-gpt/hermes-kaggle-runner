@@ -1,0 +1,36 @@
+version: 2.1
+
+jobs:
+  g077_free_tier_pilot:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Run deterministic CSV provider canary
+          command: |
+            set -euo pipefail
+            python tools/g077_free_tier_pilot.py --rows 100000 --repeats 3 --out artifact
+            python - <<'PY'
+            import json
+            r=json.load(open("artifact/receipt.json",encoding="utf-8"))
+            assert r["task_success"] is True
+            assert r["input_rows"] == 100000
+            assert r["unique_rows"] == 80000
+            assert r["secret_inputs"] == 0
+            assert r["production_credentials_used"] is False
+            print("G077_CIRCLECI_PROVIDER_PILOT_PASS")
+            print(json.dumps(r,sort_keys=True))
+            PY
+      - store_artifacts:
+          path: artifact
+          destination: g077-free-tier-csv-pilot
+
+workflows:
+  g077_free_tier:
+    jobs:
+      - g077_free_tier_pilot:
+          filters:
+            branches:
+              only: pilot/g077-ghactions-csv-20260918-1842
