@@ -1,0 +1,41 @@
+name: G077 Free Tier CSV Pilot
+
+on:
+  push:
+    branches:
+      - "pilot/g077-ghactions-csv-20260918-1842"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run deterministic CSV delivery pilot
+        run: python tools/g077_free_tier_pilot.py --rows 100000 --repeats 3 --out artifact
+      - name: Verify receipt
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open("artifact/receipt.json",encoding="utf-8"))
+          assert r["task_success"] is True
+          assert r["input_rows"] == 100000
+          assert r["expected_unique_rows"] == 80000
+          assert r["unique_rows"] == 80000
+          assert r["secret_inputs"] == 0
+          assert r["production_credentials_used"] is False
+          print(json.dumps(r,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: g077-free-tier-csv-pilot
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
