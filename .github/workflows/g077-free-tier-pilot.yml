@@ -39,3 +39,5 @@ jobs:
           path: artifact/
           if-no-files-found: error
           retention-days: 7
+
+# trigger: 2026-09-18T18:42:03+02:00
