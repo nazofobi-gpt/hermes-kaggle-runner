@@ -1,0 +1,123 @@
+name: Llama31 70B Q2 GPU Acceptance
+
+on:
+  push:
+    paths:
+      - 'control/llama70_benchmark.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kaggle-llama70-benchmark
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      DATASET_ID: nazofobigpt/hermes-llama31-70b-q2-cache
+      KERNEL_ID: nazofobigpt/hermes-llama31-70b-q2-benchmark
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_API_TOKEN:-}" || { echo 'KAGGLE_API_TOKEN missing'; exit 3; }
+          python3 -m pip install -q --upgrade kaggle
+          kaggle datasets status "$DATASET_ID"
+          echo 'LLAMA70_BENCH_CACHE_PREFLIGHT=PASS'
+
+      - name: Prepare benchmark kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path("llama70_bench")
+          metadata = {
+              "id": os.environ["KERNEL_ID"],
+              "title": "Hermes Llama31 70B Q2 Benchmark",
+              "code_file": "benchmark.py",
+              "language": "python",
+              "kernel_type": "script",
+              "is_private": True,
+              "enable_gpu": True,
+              "enable_internet": True,
+              "machine_shape": "NvidiaTeslaT4",
+              "dataset_sources": [os.environ["DATASET_ID"]],
+              "competition_sources": [],
+              "kernel_sources": [],
+              "model_sources": [],
+          }
+          (root / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Start Llama70 benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle kernels push -p llama70_bench --accelerator NvidiaTeslaT4 --timeout 1200
+          echo 'LLAMA70_BENCH_KERNEL_PUSH=PASS'
+
+      - name: Wait for benchmark terminal state
+        id: wait
+        shell: bash
+        run: |
+          set -euo pipefail
+          terminal=0
+          for i in $(seq 1 130); do
+            status=$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)
+            echo "$status"
+            if grep -Eq 'COMPLETE|ERROR|CANCEL' <<<"$status"; then
+              terminal=1
+              break
+            fi
+            sleep 10
+          done
+          [[ "$terminal" == "1" ]] || { echo 'LLAMA70_BENCH_KERNEL_TIMEOUT'; exit 5; }
+          echo 'LLAMA70_BENCH_KERNEL_TERMINAL=PASS'
+
+      - name: Download benchmark evidence
+        if: always() && steps.wait.outcome != 'skipped'
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/llama70-output"
+          mkdir -p "$out"
+          kaggle kernels output "$KERNEL_ID" -p "$out" -q || true
+          echo 'LLAMA70_OUTPUT_FILES'
+          find "$out" -maxdepth 4 -type f -printf '%p %s bytes\n' || true
+
+          result=$(find "$out" -name llama70_benchmark.json -print -quit)
+          if [ -n "$result" ]; then
+            cat "$result"
+            python3 - "$result" <<'PY'
+          import json, sys
+          data=json.load(open(sys.argv[1], encoding="utf-8"))
+          print(f"LLAMA70_RESULT_BASIC={data.get('basic_ok')}")
+          print(f"LLAMA70_RESULT_REASONING={data.get('reasoning_successes')}/3")
+          print(f"LLAMA70_RESULT_TOOL_CALLS={data.get('tool_successes')}/5")
+          print(f"LLAMA70_RESULT_CODE={data.get('code_ok')}")
+          print(f"LLAMA70_RESULT_ACTIVE_GPU_COUNT={data.get('active_gpu_count')}")
+          print(f"LLAMA70_RESULT_BASIC_TPS={data.get('basic_tps')}")
+          print(f"LLAMA70_RESULT_CODE_TPS={data.get('code_tps')}")
+          print(f"LLAMA70_RESULT_PASS={data.get('pass')}")
+          if not data.get("pass"):
+              raise SystemExit(7)
+          print("LLAMA70_BENCHMARK_VERIFIED=PASS")
+          PY
+          else
+            echo 'LLAMA70_RESULT_MISSING'
+            for f in $(find "$out" -maxdepth 4 -type f \( -name '*.log' -o -name '*.json' -o -name '*.txt' \)); do
+              echo "===== $f ====="
+              tail -n 250 "$f" || true
+            done
+            exit 6
+          fi
