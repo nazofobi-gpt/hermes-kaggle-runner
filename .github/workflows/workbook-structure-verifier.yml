@@ -1,0 +1,28 @@
+name: Workbook structure verifier
+
+on:
+  push:
+    branches:
+      - feature/g080-workbook-structure-verifier
+    paths:
+      - 'tools/workbook_structure_verifier.py'
+      - 'tests/test_workbook_structure_verifier.py'
+      - '.github/workflows/workbook-structure-verifier.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run verifier tests
+        run: python -m unittest tests.test_workbook_structure_verifier -v
+      - name: Compile helper
+        run: python -m py_compile tools/workbook_structure_verifier.py
