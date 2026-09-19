@@ -1,0 +1,48 @@
+name: G077 Container Portability Pilot
+
+on:
+  push:
+    branches:
+      - "pilot/g077-container-portability-20260919"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-container:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim-bookworm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record container runtime
+        run: |
+          set -euo pipefail
+          cat /etc/os-release
+          python --version
+      - name: Run deterministic CSV delivery pilot
+        run: python tools/g077_free_tier_pilot.py --rows 100000 --repeats 3 --out artifact
+      - name: Verify portable receipt
+        run: |
+          python - <<'PY'
+          import json
+          r=json.load(open("artifact/receipt.json",encoding="utf-8"))
+          assert r["task_success"] is True
+          assert r["input_rows"] == 100000
+          assert r["expected_unique_rows"] == 80000
+          assert r["unique_rows"] == 80000
+          assert r["input_sha256"] == "8b05e84513d2e787c55d02bfe4450438e45f47a4ec2b4a691b505b740421d272"
+          assert r["output_sha256"] == "1d1f703558706241ba3ec1f2ce1d155d3c0bda15c18947b1430c0e7e29f5b096"
+          assert r["secret_inputs"] == 0
+          assert r["production_credentials_used"] is False
+          print("G077_PORTABLE_CONTAINER_PASS")
+          print(json.dumps(r,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: g077-container-portability
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
