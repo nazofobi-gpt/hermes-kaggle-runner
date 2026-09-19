@@ -1,0 +1,29 @@
+{
+  "slug": "nazofobi-gpt/freshdesk-support-ops",
+  "id": "nazofobi-gpt/freshdesk-support-ops",
+  "version": "0.1.0",
+  "description": "Freshdesk support operations for triage, conversation review, ticket creation, updates, notes, and replies. Read actions are non-mutating; every write is declared external so RailCall stages preview, human approval, execution, and receipt.",
+  "license_required": false,
+  "credential_spec": {
+    "provider": "freshdesk",
+    "fields": [
+      {"name": "api_key", "type": "secret", "label": "Freshdesk API key", "required": true},
+      {"name": "domain", "type": "string", "label": "Freshdesk subdomain", "required": true}
+    ]
+  },
+  "requires": {
+    "network": ["*.freshdesk.com"],
+    "subprocess": false,
+    "filesystem_writes": []
+  },
+  "commands": [
+    {"name":"freshdesk.list_tickets","id":"freshdesk.list_tickets","title":"List Freshdesk tickets","description":"List tickets with bounded pagination and optional status filter.","requires":["freshdesk"],"input_schema":{"page":{"type":"integer","required":false,"default":1},"per_page":{"type":"integer","required":false,"default":30},"status":{"type":"integer","required":false}},"side_effects":"none"},
+    {"name":"freshdesk.get_ticket","id":"freshdesk.get_ticket","title":"Get Freshdesk ticket","description":"Fetch one ticket by numeric ticket id.","requires":["freshdesk"],"input_schema":{"ticket_id":{"type":"integer","required":true}},"side_effects":"none"},
+    {"name":"freshdesk.search_tickets","id":"freshdesk.search_tickets","title":"Search Freshdesk tickets","description":"Run a Freshdesk ticket search query with bounded pagination.","requires":["freshdesk"],"input_schema":{"query":{"type":"string","required":true},"page":{"type":"integer","required":false,"default":1}},"side_effects":"none"},
+    {"name":"freshdesk.list_conversations","id":"freshdesk.list_conversations","title":"List ticket conversations","description":"List conversations for a Freshdesk ticket.","requires":["freshdesk"],"input_schema":{"ticket_id":{"type":"integer","required":true}},"side_effects":"none"},
+    {"name":"freshdesk.create_ticket","id":"freshdesk.create_ticket","title":"Create Freshdesk ticket","description":"Create a support ticket after RailCall approval.","requires":["freshdesk"],"input_schema":{"email":{"type":"string","required":true},"subject":{"type":"string","required":true},"description":{"type":"string","required":true},"priority":{"type":"integer","required":false,"default":1},"status":{"type":"integer","required":false,"default":2},"source":{"type":"integer","required":false,"default":2}},"side_effects":"external"},
+    {"name":"freshdesk.update_ticket","id":"freshdesk.update_ticket","title":"Update Freshdesk ticket","description":"Update selected mutable ticket fields after RailCall approval.","requires":["freshdesk"],"input_schema":{"ticket_id":{"type":"integer","required":true},"status":{"type":"integer","required":false},"priority":{"type":"integer","required":false},"subject":{"type":"string","required":false},"type":{"type":"string","required":false},"responder_id":{"type":"integer","required":false},"group_id":{"type":"integer","required":false},"tags":{"type":"array","required":false}},"side_effects":"external"},
+    {"name":"freshdesk.add_note","id":"freshdesk.add_note","title":"Add Freshdesk note","description":"Add a private or public note to a ticket after RailCall approval.","requires":["freshdesk"],"input_schema":{"ticket_id":{"type":"integer","required":true},"body":{"type":"string","required":true},"private":{"type":"boolean","required":false,"default":true}},"side_effects":"external"},
+    {"name":"freshdesk.reply_ticket","id":"freshdesk.reply_ticket","title":"Reply to Freshdesk ticket","description":"Send a ticket reply after RailCall approval.","requires":["freshdesk"],"input_schema":{"ticket_id":{"type":"integer","required":true},"body":{"type":"string","required":true}},"side_effects":"external"}
+  ]
+}
