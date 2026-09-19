@@ -1,0 +1,14 @@
+[
+{"id":"A_BATCH","kind":"batch","public_safe":true,"needs_receipt":true,"laptop_off":true,"gpu":false,"account_action":false,"strict_zero":true,"expected":"github_actions"},
+{"id":"B_BROWSER_DEMO","kind":"browser","public_safe":true,"needs_receipt":true,"laptop_off":true,"gpu":false,"account_action":false,"strict_zero":true,"expected":"github_actions_playwright"},
+{"id":"C_SCHEDULED_WEBHOOK","kind":"scheduled","public_safe":true,"needs_receipt":true,"laptop_off":true,"gpu":false,"account_action":false,"strict_zero":true,"expected":"serverless_zero_tier"},
+{"id":"D_BOUNDED_GPU","kind":"ml","public_safe":true,"needs_receipt":true,"laptop_off":false,"gpu":true,"account_action":false,"strict_zero":true,"expected":"kaggle_bounded"},
+{"id":"E_MARKETPLACE_BID","kind":"browser","public_safe":false,"needs_receipt":true,"laptop_off":false,"gpu":false,"account_action":true,"strict_zero":true,"expected":"user_required"},
+{"id":"F_PRIVATE_CLIENT","kind":"batch","public_safe":false,"needs_receipt":true,"laptop_off":true,"gpu":false,"account_action":false,"strict_zero":true,"expected":"private_execution_required"},
+{"id":"G_ALWAYS_ON_STRICT_ZERO","kind":"always_on","public_safe":true,"needs_receipt":true,"laptop_off":true,"gpu":false,"account_action":false,"strict_zero":true,"expected":"no_verified_zero_fit"},
+{"id":"H_KAGGLE_SERVER","kind":"always_on","public_safe":true,"needs_receipt":true,"laptop_off":true,"gpu":true,"account_action":false,"strict_zero":true,"requested_provider":"kaggle","expected":"policy_block"},
+{"id":"I_QUICK_TUNNEL_PROD","kind":"remote_api","public_safe":true,"needs_receipt":true,"laptop_off":true,"gpu":false,"account_action":false,"strict_zero":true,"quick_tunnel":true,"expected":"unsafe_remote_block"},
+{"id":"J_PROVIDER_EXHAUSTED","kind":"batch","public_safe":true,"needs_receipt":true,"laptop_off":false,"gpu":false,"account_action":false,"strict_zero":true,"primary_unavailable":true,"expected":"portable_container"},
+{"id":"K_LOCAL_SIMPLE","kind":"batch","public_safe":true,"needs_receipt":false,"laptop_off":false,"gpu":false,"account_action":false,"strict_zero":true,"expected":"local"},
+{"id":"L_UNVERIFIED_PAID","kind":"always_on","public_safe":true,"needs_receipt":true,"laptop_off":true,"gpu":false,"account_action":false,"strict_zero":false,"paid_without_approval":true,"expected":"approval_required"}
+]
