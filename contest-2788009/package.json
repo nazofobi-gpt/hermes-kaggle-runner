@@ -1,0 +1,22 @@
+{
+  "name": "contest-2788009-rhf-zod-fix",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/numberInput.test.js",
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-hook-form": "^7.62.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.2",
+    "vite": "^7.1.5"
+  }
+}
