@@ -1,0 +1,22 @@
+name: Contest 2788009 RHF Zod verification
+on:
+  push:
+    branches: ['contest/2788009-rhf-zod-fix']
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contest-2788009
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: contest-2788009/package-lock.json
+      - run: npm install --package-lock-only
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
