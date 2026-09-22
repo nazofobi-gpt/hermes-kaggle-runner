@@ -1,0 +1,86 @@
+name: G080 Capability CI
+
+on:
+  push:
+    branches:
+      - g080-capabilities-20260922
+    paths:
+      - 'g080/**'
+      - '.github/workflows/g080-capabilities.yml'
+  pull_request:
+    paths:
+      - 'g080/**'
+      - '.github/workflows/g080-capabilities.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Unit and failure regression
+        run: python -m unittest discover -s g080 -p 'test_*.py' -v
+
+      - name: Benchmark
+        run: python g080/benchmark.py
+
+      - name: Secret scan
+        shell: python
+        run: |
+          import pathlib, re, sys
+          patterns = [
+              re.compile(r'AKIA[0-9A-Z]{16}'),
+              re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
+              re.compile(r'(?i)(?:api_key|secret|password|token)\s*=\s*["\'][^"\']{8,}["\']'),
+          ]
+          hits=[]
+          for p in pathlib.Path("g080").rglob("*"):
+              if not p.is_file():
+                  continue
+              text=p.read_text("utf-8", errors="ignore")
+              for rx in patterns:
+                  if rx.search(text):
+                      hits.append((str(p), rx.pattern))
+          print({"secret_pattern_hits": len(hits), "hits": hits})
+          sys.exit(1 if hits else 0)
+
+      - name: Dependency and provenance gate
+        shell: python
+        run: |
+          import ast, pathlib, sys
+          allowed={"__future__","unittest","json","statistics","time","api_adapter","coding_feature"}
+          bad=[]
+          for p in pathlib.Path("g080").glob("*.py"):
+              tree=ast.parse(p.read_text())
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      for a in node.names:
+                          root=a.name.split(".")[0]
+                          if root not in allowed: bad.append((str(p), root))
+                  if isinstance(node, ast.ImportFrom) and node.module:
+                      root=node.module.split(".")[0]
+                      if root not in allowed: bad.append((str(p), root))
+          prov=pathlib.Path("g080/PROVENANCE.md").read_text()
+          if "original fixture" not in prov.lower() or "standard library only" not in prov.lower():
+              bad.append(("g080/PROVENANCE.md","missing provenance assertion"))
+          print({"dependency_or_provenance_violations": len(bad), "violations": bad})
+          sys.exit(1 if bad else 0)
+
+      - name: Mutation scope guard
+        run: |
+          git fetch origin main --depth=1
+          BASE="$(git merge-base origin/main HEAD)"
+          git diff --name-only "$BASE"...HEAD | tee /tmp/changed.txt
+          if grep -Ev '^(g080/|\.github/workflows/g080-capabilities\.yml$)' /tmp/changed.txt | grep -q .; then
+            echo "forbidden path changed"
+            exit 1
+          fi
