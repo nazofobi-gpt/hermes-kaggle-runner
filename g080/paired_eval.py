@@ -23,10 +23,8 @@ class QueueTransport:
 
 def coding_baseline_errors():
     errors=0
-    # Unsafe baseline accepts unknown execution key.
     if "shell" in naive_config({"project_id":"P","shell":"danger"}):
         errors += 1
-    # Unsafe baseline accepts invalid timeout/retry.
     if naive_config({"project_id":"P","timeout_s":0})["timeout_s"] == 0:
         errors += 1
     if naive_config({"project_id":"P","retries":99})["retries"] == 99:
@@ -49,20 +47,16 @@ def coding_guarded_errors():
 
 def api_baseline_errors():
     errors=0
-    # 429 is not recovered.
     try:
         naive_fetch(QueueTransport([(429,{}),(200,{"items":[1],"next":None})]),
                     "https://example.invalid/items")
-        errors += 1
     except RuntimeError:
-        pass
-    # Pagination is silently truncated.
+        errors += 1
     got=naive_fetch(QueueTransport([(200,{"items":[1],"next":"p2"})]),
                     "https://example.invalid/items")
     if got == [1]:
         errors += 1
-    # No cursor-loop, schema, HTTPS or idempotency enforcement in baseline.
-    errors += 4
+    errors += 4  # no cursor-loop, schema, HTTPS or idempotency enforcement
     return errors
 
 def api_guarded_errors():
