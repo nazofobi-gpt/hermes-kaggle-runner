@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Automation Ops Demo</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="hero" class="hero">
+    <div>
+      <p class="eyebrow">Public-safe delivery fixture</p>
+      <h1>Automation Ops</h1>
+      <p>Responsive landing and lightweight admin dashboard with no external runtime dependencies.</p>
+    </div>
+    <form id="lead-form" novalidate>
+      <label for="email">Work email</label>
+      <div class="form-row">
+        <input id="email" name="email" type="email" autocomplete="email" required>
+        <button type="submit">Request demo</button>
+      </div>
+      <p id="form-status" role="status" aria-live="polite"></p>
+    </form>
+  </header>
+
+  <main id="dashboard" aria-labelledby="dashboard-title">
+    <div class="section-heading">
+      <h2 id="dashboard-title">Delivery dashboard</h2>
+      <p>Static, dependency-free UI fixture.</p>
+    </div>
+    <section class="metrics" aria-label="Key metrics">
+      <article><span>Jobs processed</span><strong>128</strong></article>
+      <article><span>Validation pass</span><strong>98.4%</strong></article>
+      <article><span>Manual review</span><strong>2</strong></article>
+    </section>
+    <section class="table-card" aria-label="Recent runs">
+      <table>
+        <thead><tr><th scope="col">Run</th><th scope="col">State</th><th scope="col">Records</th></tr></thead>
+        <tbody>
+          <tr><td>#128</td><td><span class="badge">Verified</span></td><td>4,812</td></tr>
+          <tr><td>#127</td><td><span class="badge">Verified</span></td><td>4,770</td></tr>
+          <tr><td>#126</td><td><span class="badge warning">Review</span></td><td>4,751</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
