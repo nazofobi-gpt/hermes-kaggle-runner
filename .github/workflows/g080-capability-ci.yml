@@ -1,0 +1,33 @@
+name: G080 Capability CI
+on:
+  push:
+    paths: ["capabilities/**", ".github/workflows/g080-capability-ci.yml"]
+  pull_request:
+    paths: ["capabilities/**", ".github/workflows/g080-capability-ci.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Public safety and dependency/IP hygiene
+        run: python capabilities/public_safety_verify.py
+      - name: SKILL-040 exact tests and artifact
+        run: |
+          python capabilities/api_pagination_etl.py selftest
+          python capabilities/api_pagination_etl.py fixture --input capabilities/api_fixture.json --output /tmp/g080.csv
+          test "$(wc -l < /tmp/g080.csv)" -eq 5
+      - name: SKILL-043 exact tests
+        run: |
+          python capabilities/frontend_verify.py selftest
+          python capabilities/frontend_verify.py verify
+      - name: Benchmarks
+        run: |
+          python capabilities/api_pagination_etl.py benchmark
+          python capabilities/frontend_verify.py benchmark
