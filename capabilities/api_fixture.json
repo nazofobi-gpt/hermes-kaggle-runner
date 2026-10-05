@@ -1,0 +1,45 @@
+{
+  "pages": {
+    "1": {
+      "items": [
+        {
+          "id": 1,
+          "name": "alpha"
+        },
+        {
+          "id": 2,
+          "name": "beta"
+        }
+      ],
+      "next": 2
+    },
+    "2": {
+      "items": [
+        {
+          "id": 2,
+          "name": "duplicate"
+        },
+        {
+          "name": "missing-id"
+        },
+        {
+          "id": 3,
+          "name": "gamma"
+        }
+      ],
+      "next": 3
+    },
+    "3": {
+      "items": [
+        {
+          "id": 4,
+          "name": "delta"
+        }
+      ],
+      "next": null
+    }
+  },
+  "transient_failures": {
+    "2": 1
+  }
+}
